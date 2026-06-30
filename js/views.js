@@ -1,0 +1,788 @@
+// Pure(ish) rendering: state + Store -> HTML strings. All interactivity is wired via
+// inline on* attributes calling into window.A (see app.js) — no virtual DOM, just re-render.
+
+let _timelineMeta = null; // { yToH(y), axis:{startH,endH} } — read by main.js after DOM insert
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function hm(date) {
+  return String(date.getHours()).padStart(2, '0') + ':' + String(date.getMinutes()).padStart(2, '0');
+}
+function fracOf(date) { return date.getHours() + date.getMinutes() / 60; }
+
+function milkColorOf(ev) { return (ev.breastMl > 0 && ev.formulaMl > 0) ? '#C77D52' : ((ev.formulaMl > 0) ? '#E8A33D' : '#FF8C6B'); }
+function dotColor(ev) { return ev.type === 'milk' ? milkColorOf(ev) : ev.type === 'poop' ? '#C8965A' : '#79C3F0'; }
+function tintBg(ev) { return ev.type === 'milk' ? ((ev.breastMl > 0 && ev.formulaMl > 0) ? 'var(--tMix)' : (ev.formulaMl > 0 ? 'var(--tMilkF)' : 'var(--tMilkB)')) : ev.type === 'poop' ? 'var(--tPoop)' : 'var(--tPee)'; }
+function emojiOf(t) { return t === 'milk' ? '🍼' : t === 'poop' ? '💩' : '💧'; }
+
+// ============================= THEME =============================
+function applyTheme(state) {
+  const sysDark = !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  const effNight = state.theme === 'night' || (state.theme === 'auto' && sysDark);
+  const appEl = document.querySelector('.app');
+  if (appEl) appEl.setAttribute('data-theme', effNight ? 'night' : 'day');
+  document.querySelector('meta[name=theme-color]')?.setAttribute('content', effNight ? '#16130E' : '#FAF6EF');
+  return effNight;
+}
+
+// ============================= NAV =============================
+function navIcon(name, active) {
+  const c = active ? 'var(--accent)' : 'var(--text3)';
+  if (name === 'home') return `<svg width="22" height="22" viewBox="0 0 22 22"><path d="M3 9.5L11 3l8 6.5V19a1 1 0 01-1 1H14v-5H8v5H4a1 1 0 01-1-1z" fill="${c}"/></svg>`;
+  if (name === 'stats') return `<svg width="22" height="22" viewBox="0 0 22 22" fill="none"><rect x="2" y="12" width="4" height="7" rx="1.5" fill="${c}"/><rect x="9" y="7" width="4" height="12" rx="1.5" fill="${c}"/><rect x="16" y="4" width="4" height="15" rx="1.5" fill="${c}"/></svg>`;
+  if (name === 'records') return `<svg width="22" height="22" viewBox="0 0 22 22" fill="none"><rect x="3" y="2" width="16" height="18" rx="3" stroke="${c}" stroke-width="1.5"/><path d="M7 7h8M7 11h8M7 15h5" stroke="${c}" stroke-width="1.5" stroke-linecap="round"/></svg>`;
+  return `<svg width="22" height="22" viewBox="0 0 22 22" fill="none"><circle cx="11" cy="11" r="3" stroke="${c}" stroke-width="1.5"/><path d="M11 2v2m0 14v2M2 11h2m14 0h2m-3.17-6.83-1.42 1.42M6.59 15.41l-1.42 1.42M18.83 17.83l-1.42-1.42M5.59 6.59 4.17 5.17" stroke="${c}" stroke-width="1.5" stroke-linecap="round"/></svg>`;
+}
+function backIcon() { return `<svg width="9" height="15" viewBox="0 0 9 15" fill="none"><path d="M8 1L1.5 7.5 8 14" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`; }
+
+function renderNav(state) {
+  const s = state.screen;
+  const fabColor = 'var(--accent)';
+  return `
+  <div style="flex-shrink:0;height:84px;background:var(--nav);backdrop-filter:blur(10px);border-top:1px solid var(--line);display:flex;align-items:flex-start;justify-content:space-around;padding:10px 4px 0;z-index:20;">
+    <button onclick="A.goHome()" style="background:none;border:none;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:56px;">
+      ${navIcon('home', s === 'home')}<span style="font-size:10px;font-weight:700;color:${s === 'home' ? 'var(--accent)' : 'var(--text3)'};">首頁</span>
+    </button>
+    <button onclick="A.goStats()" style="background:none;border:none;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:56px;">
+      ${navIcon('stats', s === 'stats')}<span style="font-size:10px;font-weight:700;color:${s === 'stats' ? 'var(--accent)' : 'var(--text3)'};">統計</span>
+    </button>
+    <button onclick="A.openGrowth()" style="background:none;border:none;display:flex;flex-direction:column;align-items:center;margin-top:-18px;min-width:60px;">
+      <div style="width:54px;height:54px;border-radius:50%;background:${fabColor};display:flex;align-items:center;justify-content:center;box-shadow:0 4px 18px rgba(240,165,0,.5);">
+        <svg width="26" height="26" viewBox="0 0 26 26" fill="none"><line x1="13" y1="5" x2="13" y2="21" stroke="white" stroke-width="2.5" stroke-linecap="round"/><line x1="5" y1="13" x2="21" y2="13" stroke="white" stroke-width="2.5" stroke-linecap="round"/></svg>
+      </div>
+    </button>
+    <button onclick="A.goRecords()" style="background:none;border:none;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:56px;">
+      ${navIcon('records', s === 'records')}<span style="font-size:10px;font-weight:700;color:${s === 'records' ? 'var(--accent)' : 'var(--text3)'};">紀錄</span>
+    </button>
+    <button onclick="A.goConfig()" style="background:none;border:none;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:56px;">
+      ${navIcon('config', s === 'config')}<span style="font-size:10px;font-weight:700;color:${s === 'config' ? 'var(--accent)' : 'var(--text3)'};">設定</span>
+    </button>
+  </div>`;
+}
+
+function headerBar(title) {
+  return `<div style="padding:18px 22px 8px;display:flex;align-items:center;gap:12px;">
+    <button onclick="A.goHome()" style="width:38px;height:38px;border-radius:50%;background:var(--card);border:none;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px var(--shadow);">${backIcon()}</button>
+    <h1 style="font-size:24px;font-weight:800;letter-spacing:-.5px;color:var(--text);">${title}</h1>
+  </div>`;
+}
+
+// ============================= HOME =============================
+function renderSyncPill() {
+  const st = Sync.state;
+  if (st === 'syncing') return `<div style="display:flex;align-items:center;gap:8px;color:var(--text2);font-size:12px;font-weight:600;"><div style="width:15px;height:15px;border:2px solid var(--track);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;"></div>同步中…</div>`;
+  if (st === 'done') return `<div style="display:flex;align-items:center;gap:6px;color:#4FA84F;font-size:12px;font-weight:700;">✓ 已同步</div>`;
+  if (st === 'fail') return `<div onclick="A.doSync()" style="cursor:pointer;display:flex;align-items:center;gap:6px;color:#D2654A;font-size:12px;font-weight:700;">⚠ ${esc(Sync.message || '同步失敗')}・點擊重試</div>`;
+  return `<div onclick="A.doSync()" style="cursor:pointer;display:flex;align-items:center;gap:6px;color:var(--text3);font-size:11.5px;font-weight:600;">↓ 下拉同步</div>`;
+}
+
+function renderPrediction() {
+  const p = AppRef().predict();
+  if (p.status === 'ok') {
+    const rem = (p.nextTime - new Date()) / 60000;
+    let cd;
+    if (rem > 0) { const rh = Math.floor(rem / 60), rm = Math.round(rem % 60); cd = '⏱ ' + (rh > 0 ? `還有 ${rh}h ${rm}m` : `還有 ${rm}m`); }
+    else cd = '✨ 現在可以餵囉';
+    return `<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;">
+      <div>
+        <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.8px;margin-bottom:5px;">預計下一餐</p>
+        <p style="font-size:34px;font-weight:800;letter-spacing:-1.5px;line-height:1;color:var(--text);">${hm(p.nextTime)}</p>
+        <p style="font-size:13px;color:var(--text2);font-weight:500;margin-top:4px;">${cd}</p>
+      </div>
+      <div style="width:62px;height:62px;border-radius:50%;background:var(--card2);display:flex;align-items:center;justify-content:center;font-size:30px;">🍼</div>
+    </div>`;
+  }
+  return `<div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;">
+    <div style="width:56px;height:56px;border-radius:50%;background:var(--card2);display:flex;align-items:center;justify-content:center;font-size:26px;">🔍</div>
+    <div><p style="font-size:15px;font-weight:800;color:var(--text);">資料蒐集中…</p><p style="font-size:12px;color:var(--text2);margin-top:3px;line-height:1.4;">記錄滿兩天後即可預測下一餐</p></div>
+  </div>`;
+}
+
+function lastTimeLabel(type) {
+  const evs = Store.liveEvents().filter(e => e.type === type).sort((a, b) => new Date(a.time) - new Date(b.time));
+  return evs.length ? hm(new Date(evs[evs.length - 1].time)) : '--:--';
+}
+
+function renderTimeline(state) {
+  const scales = [['today', '今天'], ['week', '本週'], ['month', '本月'], ['year', '本年']];
+  const tabs = `<div style="display:flex;background:var(--card2);border-radius:14px;padding:4px;margin-bottom:16px;">
+    ${scales.map(([k, l]) => `<button onclick="A.set({scale:'${k}'})" style="flex:1;padding:8px 0;border:none;border-radius:10px;font-size:12.5px;font-weight:700;font-family:inherit;background:${state.scale === k ? 'var(--card)' : 'transparent'};color:${state.scale === k ? 'var(--text)' : 'var(--text2)'};box-shadow:${state.scale === k ? '0 2px 6px var(--shadow)' : 'none'};">${l}</button>`).join('')}
+  </div>`;
+
+  let body;
+  if (state.scale === 'today') body = renderTodayTimeline(state);
+  else body = renderBarTimeline(state.scale);
+  return `<div>${tabs}${body}</div>`;
+}
+
+function renderBarTimeline(scale) {
+  const sets = {
+    week: { data: weeklyMilkCounts(), labels: ['一', '二', '三', '四', '五', '六', '日'], cap: '每日喝奶次數' },
+    month: { data: monthlyWeeklyMilkCounts(), labels: monthlyWeekLabels(), cap: '每週喝奶次數' },
+    year: { data: yearlyMonthlyMilkCounts(), labels: ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'], cap: '每月喝奶次數' },
+  };
+  const set = sets[scale];
+  const max = Math.max(1, ...set.data);
+  return `<div>
+    <p style="font-size:12px;color:var(--text2);font-weight:600;margin-bottom:12px;">${set.cap}</p>
+    <div style="display:flex;align-items:flex-end;gap:${scale === 'year' ? 4 : 8}px;height:130px;">
+      ${set.data.map((v, i) => `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;">
+        <div style="font-size:9px;color:var(--text3);font-weight:700;">${scale === 'year' ? '' : v}</div>
+        <div style="width:100%;height:${Math.round(v / max * 96) + 6}px;background:linear-gradient(180deg,#FF8C6B,#FF6B4A);border-radius:6px;transform-origin:bottom;animation:growBar .5s ease;"></div>
+        <div style="font-size:9px;color:var(--text2);font-weight:600;">${set.labels[i]}</div>
+      </div>`).join('')}
+    </div>
+  </div>`;
+}
+
+function dayKey(d) { return d.toISOString().slice(0, 10); }
+function weeklyMilkCounts() {
+  const now = new Date(); const out = [];
+  const dow = (now.getDay() + 6) % 7; // Mon=0
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(now); d.setDate(now.getDate() - dow + i); d.setHours(0, 0, 0, 0);
+    const next = new Date(d); next.setDate(d.getDate() + 1);
+    out.push(Store.liveEvents().filter(e => e.type === 'milk' && new Date(e.time) >= d && new Date(e.time) < next).length);
+  }
+  return out;
+}
+function monthlyWeekLabels() { return ['W1', 'W2', 'W3', 'W4', 'W5']; }
+function monthlyWeeklyMilkCounts() {
+  const now = new Date(); const start = new Date(now.getFullYear(), now.getMonth(), 1);
+  const out = [0, 0, 0, 0, 0];
+  Store.liveEvents().forEach(e => {
+    if (e.type !== 'milk') return;
+    const t = new Date(e.time);
+    if (t.getFullYear() !== now.getFullYear() || t.getMonth() !== now.getMonth()) return;
+    const w = Math.min(4, Math.floor((t.getDate() - 1) / 7));
+    out[w]++;
+  });
+  return out;
+}
+function yearlyMonthlyMilkCounts() {
+  const now = new Date(); const out = new Array(12).fill(0);
+  Store.liveEvents().forEach(e => {
+    if (e.type !== 'milk') return;
+    const t = new Date(e.time);
+    if (t.getFullYear() !== now.getFullYear()) return;
+    out[t.getMonth()]++;
+  });
+  return out;
+}
+
+function renderTodayTimeline(state) {
+  const now = new Date();
+  const nowFrac = fracOf(now);
+  const todayEvents = Store.liveEvents().filter(e => dayKey(new Date(e.time)) === dayKey(now)).map(e => ({ ...e, h: fracOf(new Date(e.time)) }));
+  const pxH = 40, padTop = 14, axisX = 54, half = 19, keepR = 0.8, collapseMin = 3, collapsePx = 46;
+  const dragEv = state.dragId ? todayEvents.find(e => e.id === state.dragId) : null;
+  const baseRecs = dragEv ? todayEvents.filter(e => e.id !== state.dragId) : todayEvents;
+  const pts = todayEvents.map(e => e.h).concat([nowFrac]);
+  const startH = Math.max(0, Math.floor(Math.min(...pts)) - 1);
+  const endH = Math.min(24, Math.ceil(Math.max(...pts)) + 1);
+
+  let keeps = pts.map(h => [Math.max(startH, h - keepR), Math.min(endH, h + keepR)]).sort((a, b) => a[0] - b[0]);
+  const merged = [];
+  keeps.forEach(k => { const last = merged[merged.length - 1]; if (last && k[0] <= last[1] + 0.001) last[1] = Math.max(last[1], k[1]); else merged.push([k[0], k[1]]); });
+  const segs = []; let cur = startH;
+  merged.forEach(m => {
+    if (m[0] > cur + 0.001) { const len = m[0] - cur, key = cur.toFixed(2) + '-' + m[0].toFixed(2); segs.push({ h0: cur, h1: m[0], collapsed: len >= collapseMin && !state.expandedGaps.includes(key), key }); }
+    segs.push({ h0: Math.max(cur, m[0]), h1: m[1], collapsed: false });
+    cur = Math.max(cur, m[1]);
+  });
+  if (cur < endH - 0.001) { const len = endH - cur, key = cur.toFixed(2) + '-' + endH.toFixed(2); segs.push({ h0: cur, h1: endH, collapsed: len >= collapseMin && !state.expandedGaps.includes(key), key }); }
+  let yy = padTop;
+  segs.forEach(sg => { sg.y0 = yy; sg.px = sg.collapsed ? collapsePx : (sg.h1 - sg.h0) * pxH; sg.y1 = sg.y0 + sg.px; yy = sg.y1; });
+  const Yof = (h) => { for (const sg of segs) { if (h <= sg.h1 + 1e-9) { const f = (h - sg.h0) / ((sg.h1 - sg.h0) || 1); return sg.y0 + Math.max(0, Math.min(1, f)) * sg.px; } } return yy; };
+  const yToH = (y) => { for (const sg of segs) { if (y <= sg.y1) { const f = (y - sg.y0) / (sg.px || 1); return sg.h0 + Math.max(0, Math.min(1, f)) * (sg.h1 - sg.h0); } } return endH; };
+  _timelineMeta = { yToH, axis: { startH, endH } };
+
+  const sorted = [...baseRecs].sort((a, b) => a.h - b.h);
+  const clusters = [];
+  sorted.forEach(r => { const last = clusters[clusters.length - 1]; if (last && Math.abs(r.h - last.items[0].h) <= 0.18) last.items.push(r); else clusters.push({ items: [r] }); });
+  let lastY = -999;
+  clusters.forEach(cl => { const mean = cl.items.reduce((a, r) => a + r.h, 0) / cl.items.length; let y = Yof(mean); if (y < lastY + (2 * half + 6)) y = lastY + (2 * half + 6); cl.y = y; cl.time = mean; lastY = y; });
+  const trackH = Math.max(yy + padTop, lastY + 30);
+
+  let nodes = `<div style="position:absolute;left:${axisX}px;top:${padTop}px;width:2px;height:${trackH - padTop * 2}px;background:var(--track);border-radius:1px;"></div>`;
+  segs.forEach(sg => {
+    if (sg.collapsed) {
+      nodes += `<div onclick="A.toggleGap('${sg.key}')" style="position:absolute;left:6px;right:6px;top:${sg.y0}px;height:${sg.px}px;display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;">
+        <div style="flex:1;height:0;border-top:1.5px dashed var(--track);"></div>
+        <span style="font-size:10px;color:var(--text3);font-weight:600;white-space:nowrap;">⋯ ${hm(toClock(sg.h0))}–${hm(toClock(sg.h1))} 無紀錄 ▸</span>
+        <div style="flex:1;height:0;border-top:1.5px dashed var(--track);"></div></div>`;
+    } else {
+      for (let h = Math.ceil(sg.h0 - 1e-6); h <= sg.h1 + 1e-6; h++) {
+        if (h < sg.h0 - 1e-6 || h > sg.h1 + 1e-6) continue;
+        const y = Yof(h);
+        nodes += `<div style="position:absolute;left:${axisX}px;right:0;top:${y}px;height:1px;background:var(--grid);"></div>
+          <div style="position:absolute;left:0;width:${axisX - 12}px;text-align:right;top:${y - 6}px;font-size:9px;color:var(--text3);font-weight:600;">${(h < 10 ? '0' + h : h)}:00</div>`;
+      }
+    }
+  });
+  const ny = Yof(nowFrac);
+  nodes += `<div style="position:absolute;left:${axisX - 4}px;right:0;top:${ny}px;height:2px;background:var(--accent);z-index:3;"></div>
+    <div style="position:absolute;right:4px;top:${ny - 14}px;font-size:9px;font-weight:800;color:var(--accent);background:var(--card2);padding:1px 6px;border-radius:6px;z-index:3;">現在 ${hm(now)}</div>`;
+
+  const chip = (r, active) => {
+    let kids = `<span style="font-size:15px;">${emojiOf(r.type)}</span>`;
+    if (r.type === 'milk') {
+      const mix = r.breastMl > 0 && r.formulaMl > 0;
+      const amt = mix ? (r.breastMl + '+' + r.formulaMl + 'ml') : ((r.formulaMl > 0 ? r.formulaMl : r.breastMl) + 'ml');
+      const tag = mix ? '混合' : (r.formulaMl > 0 ? '配方乳' : '母乳');
+      kids += `<span style="color:${milkColorOf(r)};">${amt}</span><span style="font-size:10px;font-weight:700;color:${milkColorOf(r)};">${tag}</span>`;
+    } else kids += `<span>${r.type === 'poop' ? '排便' : '尿尿'}</span>`;
+    return `<div onpointerdown="A.startDrag('${r.id}',event.clientX,event.clientY)" title="${hm(new Date(r.time))}" class="chip" style="background:${tintBg(r)};box-shadow:${active ? '0 6px 16px var(--shadow2)' : '0 1px 3px var(--shadow)'};transform:${active ? 'scale(1.05)' : 'none'};">${kids}</div>`;
+  };
+  clusters.forEach((cl, ci) => {
+    nodes += `<div style="position:absolute;left:${axisX - 4}px;top:${cl.y - 5}px;width:10px;height:10px;border-radius:50%;background:${dotColor(cl.items[0])};border:2px solid var(--card);z-index:2;"></div>
+      <div style="position:absolute;left:0;width:${axisX - 12}px;text-align:right;top:${cl.y - 8}px;font-size:12px;font-weight:800;color:var(--text);z-index:2;">${hm(toClock(cl.time))}</div>
+      <div style="position:absolute;left:${axisX + 14}px;right:4px;top:${cl.y - half}px;min-height:${2 * half}px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;z-index:2;">${cl.items.map(r => chip(r, false)).join('')}</div>`;
+  });
+  if (dragEv) {
+    const y = Yof(dragEv.h);
+    nodes += `<div style="position:absolute;left:${axisX - 5}px;top:${y - 6}px;width:12px;height:12px;border-radius:50%;background:${dotColor(dragEv)};border:2px solid var(--card);z-index:8;"></div>
+      <div style="position:absolute;left:0;width:${axisX - 12}px;text-align:right;top:${y - 8}px;font-size:12px;font-weight:800;color:var(--accent);z-index:8;">${hm(toClock(dragEv.h))}</div>
+      <div style="position:absolute;left:${axisX + 14}px;right:4px;top:${y - half}px;display:flex;align-items:center;gap:6px;z-index:8;">${chip(dragEv, true)}</div>`;
+  }
+  const legend = [['#FF8C6B', '母乳'], ['#E8A33D', '配方'], ['#C77D52', '混合'], ['#C8965A', '排便'], ['#79C3F0', '尿尿']]
+    .map(([c, l]) => `<div style="display:flex;align-items:center;gap:4px;"><div style="width:9px;height:9px;border-radius:50%;background:${c};"></div><span style="font-size:11px;color:var(--text2);">${l}</span></div>`).join('');
+
+  return `<div>
+    <div id="timeline-track" style="position:relative;height:${trackH}px;">${nodes}</div>
+    <div style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap;justify-content:center;">${legend}</div>
+    <p style="font-size:10.5px;color:var(--text3);margin-top:8px;text-align:center;">長按事件標籤上下拖曳改時間・點一下開編輯</p>
+  </div>`;
+}
+function toClock(frac) { const d = new Date(); d.setHours(Math.floor(frac), Math.round((frac % 1) * 60), 0, 0); return d; }
+
+function renderHome(state) {
+  const milks = Store.liveEvents().filter(e => e.type === 'milk');
+  const todayEvents = Store.liveEvents().filter(e => dayKey(new Date(e.time)) === dayKey(new Date()));
+  const milkCount = todayEvents.filter(e => e.type === 'milk').length;
+  const totalMilkMl = todayEvents.filter(e => e.type === 'milk').reduce((s, e) => s + (e.amountMl || 0), 0);
+  const poopCount = todayEvents.filter(e => e.type === 'poop').length;
+  const peeCount = todayEvents.filter(e => e.type === 'pee').length;
+  const btnSize = 112, btnOpacity = 0.75;
+  const now = new Date();
+  const todayLabel = now.toLocaleDateString('zh-TW', { weekday: 'long', month: 'long', day: 'numeric' });
+  const babyName = Store.data.settings.babyName || '寶貝';
+
+  return `<div class="ns" id="scroll-area" style="flex:1;min-height:0;padding-bottom:18px;">
+    <div style="display:flex;justify-content:center;align-items:center;gap:8px;height:38px;">${renderSyncPill()}</div>
+    <div style="padding:2px 22px 14px;display:flex;justify-content:space-between;align-items:center;">
+      <div>
+        <p style="font-size:13px;font-weight:500;color:var(--text2);margin-bottom:3px;">${esc(todayLabel)}</p>
+        <h1 style="font-size:29px;font-weight:800;letter-spacing:-.5px;line-height:1.1;color:var(--text);">嗨，${esc(babyName)}！👋</h1>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <button onclick="A.toggleTheme()" style="width:40px;height:40px;border-radius:50%;background:var(--card);border:none;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px var(--shadow);">${themeIcon(state)}</button>
+        <div style="width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,#FFCC70,#FF8C6B);display:flex;align-items:center;justify-content:center;font-size:22px;box-shadow:0 4px 14px rgba(240,165,0,.35);">👶</div>
+      </div>
+    </div>
+    <div style="margin:0 16px 14px;background:var(--card);border-radius:18px;padding:18px 20px;box-shadow:0 2px 16px var(--shadow);">
+      ${renderPrediction()}
+      <div style="display:flex;padding-top:14px;border-top:1px solid var(--line);">
+        <div style="flex:1;text-align:center;"><p style="font-size:21px;font-weight:800;color:#FF7A56;line-height:1;">${milkCount}</p><p style="font-size:10px;color:var(--text2);font-weight:600;margin-top:2px;">喝奶</p></div>
+        <div style="width:1px;background:var(--line);margin:0 2px;"></div>
+        <div style="flex:1;text-align:center;"><p style="font-size:21px;font-weight:800;line-height:1;color:var(--text);">${totalMilkMl}</p><p style="font-size:10px;color:var(--text2);font-weight:600;margin-top:2px;">ml</p></div>
+        <div style="width:1px;background:var(--line);margin:0 2px;"></div>
+        <div style="flex:1;text-align:center;"><p style="font-size:21px;font-weight:800;color:#C8965A;line-height:1;">${poopCount}</p><p style="font-size:10px;color:var(--text2);font-weight:600;margin-top:2px;">排便</p></div>
+        <div style="width:1px;background:var(--line);margin:0 2px;"></div>
+        <div style="flex:1;text-align:center;"><p style="font-size:21px;font-weight:800;color:#4AAEDF;line-height:1;">${peeCount}</p><p style="font-size:10px;color:var(--text2);font-weight:600;margin-top:2px;">尿尿</p></div>
+      </div>
+    </div>
+    <div style="padding:4px 16px 14px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <p style="font-size:17px;font-weight:700;color:var(--text);">快速記錄</p>
+        <p style="font-size:11px;color:var(--text3);">長按排便/尿尿可補記時間</p>
+      </div>
+      <div class="btn-row">
+        <button onclick="A.openMilk()" class="round-btn" style="width:${btnSize}px;height:${btnSize}px;background:#FCD0A1;box-shadow:0 6px 22px rgba(252,208,161,.55);opacity:${btnOpacity};">
+          <div style="font-size:32px;line-height:1;">🍼</div><p style="font-size:15px;font-weight:800;color:#5C4A10;">喝奶</p><p style="font-size:10px;color:rgba(92,74,16,.7);font-weight:600;">${lastTimeLabel('milk')}</p>
+        </button>
+        <button onclick="A.tap('poop')" onpointerdown="A.startPress('poop')" onpointerup="A.endPress()" onpointerleave="A.endPress()" class="round-btn" style="width:${btnSize}px;height:${btnSize}px;background:#995D81;box-shadow:0 6px 22px rgba(153,93,129,.4);opacity:${btnOpacity};">
+          <div style="font-size:32px;line-height:1;">💩</div><p style="font-size:15px;font-weight:800;color:#fff;">排便</p><p style="font-size:10px;color:rgba(255,255,255,.72);font-weight:600;">${lastTimeLabel('poop')}</p>
+        </button>
+        <button onclick="A.tap('pee')" onpointerdown="A.startPress('pee')" onpointerup="A.endPress()" onpointerleave="A.endPress()" class="round-btn" style="width:${btnSize}px;height:${btnSize}px;background:#9BB1FF;box-shadow:0 6px 22px rgba(155,177,255,.5);opacity:${btnOpacity};">
+          <div style="font-size:32px;line-height:1;">💧</div><p style="font-size:15px;font-weight:800;color:#24365E;">尿尿</p><p style="font-size:10px;color:rgba(36,54,94,.68);font-weight:600;">${lastTimeLabel('pee')}</p>
+        </button>
+      </div>
+    </div>
+    <div style="padding:0 16px 24px;">
+      <div style="background:var(--card);border-radius:18px;padding:18px 18px 20px;box-shadow:0 2px 12px var(--shadow);">
+        <p style="font-size:15px;font-weight:700;margin-bottom:14px;color:var(--text);">活動時間軸</p>
+        ${renderTimeline(state)}
+      </div>
+    </div>
+  </div>`;
+}
+
+function themeIcon(state) {
+  const sysDark = !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  const effNight = state.theme === 'night' || (state.theme === 'auto' && sysDark);
+  if (effNight) return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z" fill="var(--text2)"/></svg>`;
+  return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="4" fill="var(--text2)"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.4 1.4M17.6 17.6L19 19M19 5l-1.4 1.4M6.4 17.6L5 19" stroke="var(--text2)" stroke-width="2" stroke-linecap="round"/></svg>`;
+}
+
+// ============================= STATS =============================
+function sCard(title, child) {
+  return `<div class="card" style="padding:16px 16px 14px;margin-bottom:14px;"><p style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:14px;">${title}</p>${child}</div>`;
+}
+function rangeBounds(range) {
+  const now = new Date();
+  if (range === 'week') { const dow = (now.getDay() + 6) % 7; const s = new Date(now); s.setDate(now.getDate() - dow); s.setHours(0, 0, 0, 0); return [s, now]; }
+  if (range === 'month') { return [new Date(now.getFullYear(), now.getMonth(), 1), now]; }
+  return [new Date(now.getFullYear(), 0, 1), now];
+}
+function renderFeedStats(state) {
+  const range = state.statsRange;
+  const [from, to] = rangeBounds(range);
+  const evs = Store.liveEvents().filter(e => { const t = new Date(e.time); return t >= from && t <= to; });
+  const milks = evs.filter(e => e.type === 'milk');
+  const totalMl = milks.reduce((s, e) => s + (e.amountMl || 0), 0);
+  const days = Math.max(1, Math.round((to - from) / 86400000) + 1);
+  const avgMl = Math.round(totalMl / days);
+  const diaperCount = evs.filter(e => e.type === 'poop' || e.type === 'pee').length;
+  const sortedMilks = milks.slice().sort((a, b) => new Date(a.time) - new Date(b.time));
+  let avgIntervalLabel = '—';
+  if (sortedMilks.length >= 2) {
+    let totalMin = 0;
+    for (let i = 1; i < sortedMilks.length; i++) totalMin += (new Date(sortedMilks[i].time) - new Date(sortedMilks[i - 1].time)) / 60000;
+    const avgMin = totalMin / (sortedMilks.length - 1);
+    avgIntervalLabel = `${Math.floor(avgMin / 60)}h${Math.round(avgMin % 60)}m`;
+  }
+
+  const rangeTabs = `<div class="seg" style="margin-bottom:14px;">${[['week', '本週'], ['month', '本月'], ['year', '本年']].map(([k, l]) => `<button class="${state.statsRange === k ? 'active' : ''}" onclick="A.set({statsRange:'${k}'})">${l}</button>`).join('')}</div>`;
+  const sStat = (val, lbl) => `<div style="flex:1;text-align:center;"><p style="font-size:19px;font-weight:800;color:var(--text);line-height:1;">${val}</p><p style="font-size:10px;color:var(--text2);font-weight:600;margin-top:3px;">${lbl}</p></div>`;
+  const div = `<div style="width:1px;background:var(--line);margin:0 2px;"></div>`;
+  const summary = `<div class="card" style="display:flex;padding:16px 8px;margin-bottom:14px;">${sStat(avgMl, '平均奶量/日')}${div}${sStat(avgIntervalLabel, '平均餵奶間隔')}${div}${sStat(diaperCount, '排泄次數')}</div>`;
+
+  const byMap = {};
+  evs.forEach(e => { const k = e.by || '未命名'; if (!byMap[k]) byMap[k] = { milk: 0, diaper: 0 }; if (e.type === 'milk') byMap[k].milk++; else byMap[k].diaper++; });
+  const ranking = Object.keys(byMap).map(name => ({ name, milk: byMap[name].milk, diaper: byMap[name].diaper, total: byMap[name].milk + byMap[name].diaper })).sort((a, b) => b.total - a.total);
+  const rkMax = ranking.length ? Math.max(...ranking.map(r => r.total)) : 1;
+  const cgRows = ranking.map((r, i) => `<div style="margin-bottom:${i === ranking.length - 1 ? 0 : 13}px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px;"><span style="font-size:14px;font-weight:700;color:var(--text);">${i === 0 && r.total > 0 ? '🏅 ' : ''}${esc(r.name)}</span><span style="font-size:12px;color:var(--text2);">🍼 ${r.milk} ・ 🧷 ${r.diaper}</span></div>
+    <div style="height:8px;border-radius:4px;background:var(--card2);overflow:hidden;"><div style="width:${r.total / rkMax * 100}%;height:100%;border-radius:4px;background:${i === 0 ? 'linear-gradient(90deg,#F0A500,#FF8C6B)' : 'var(--track)'};"></div></div></div>`).join('');
+  const caregiverCard = sCard('照顧者分擔 💛', ranking.length ? (cgRows + `<p style="font-size:11px;color:var(--text3);margin-top:12px;text-align:center;">謝謝大家一起照顧寶寶 🌿</p>`) : `<p style="font-size:13px;color:var(--text3);text-align:center;padding:20px 0;">還沒有記錄</p>`);
+
+  const { labels, milkCounts } = bucketize(range, evs, 'milk');
+  const mMax = Math.max(1, ...milkCounts);
+  const milkChart = sCard(`喝奶次數（${range === 'week' ? '每日' : range === 'month' ? '每週' : '每月'}）`,
+    `<div style="display:flex;align-items:flex-end;gap:6px;height:120px;">${milkCounts.map((v, i) => `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;"><div style="font-size:9px;color:var(--text3);font-weight:700;">${v}</div><div style="width:100%;height:${Math.round(v / mMax * 86) + 6}px;background:linear-gradient(180deg,#FF8C6B,#FF6B4A);border-radius:6px;"></div><div style="font-size:9px;color:var(--text2);font-weight:600;">${labels[i]}</div></div>`).join('')}</div>`);
+
+  const { breastMl, formulaMl } = bucketizeMl(range, evs);
+  const totals = breastMl.map((b, i) => b + formulaMl[i]);
+  const aMax = Math.max(1, ...totals);
+  const amtChart = sCard('奶量 ml（母乳 ＋ 配方）',
+    `<div style="display:flex;align-items:flex-end;gap:6px;height:120px;">${totals.map((tot, i) => `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;"><div style="width:100%;height:${Math.round(tot / aMax * 92)}px;border-radius:6px;overflow:hidden;display:flex;flex-direction:column;">${tot > 0 ? `<div style="height:${formulaMl[i] / tot * 100}%;background:#E8A33D;"></div><div style="flex:1;background:#FF8C6B;"></div>` : ''}</div><div style="font-size:9px;color:var(--text2);font-weight:600;">${labels[i]}</div></div>`).join('')}</div>
+    <div style="display:flex;gap:14px;margin-top:12px;justify-content:center;">${[['#FF8C6B', '母乳'], ['#E8A33D', '配方']].map(([c, l]) => `<div style="display:flex;align-items:center;gap:4px;"><div style="width:9px;height:9px;border-radius:50%;background:${c};"></div><span style="font-size:11px;color:var(--text2);">${l}</span></div>`).join('')}</div>`);
+
+  return rangeTabs + summary + caregiverCard + milkChart + amtChart;
+}
+function bucketize(range, evs, type) {
+  const now = new Date();
+  if (range === 'week') {
+    const labels = ['一', '二', '三', '四', '五', '六', '日']; const counts = new Array(7).fill(0);
+    evs.filter(e => e.type === type).forEach(e => { const d = (new Date(e.time).getDay() + 6) % 7; counts[d]++; });
+    return { labels, milkCounts: counts };
+  }
+  if (range === 'month') {
+    const labels = ['W1', 'W2', 'W3', 'W4', 'W5']; const counts = new Array(5).fill(0);
+    evs.filter(e => e.type === type).forEach(e => { const w = Math.min(4, Math.floor((new Date(e.time).getDate() - 1) / 7)); counts[w]++; });
+    return { labels, milkCounts: counts };
+  }
+  const labels = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12']; const counts = new Array(12).fill(0);
+  evs.filter(e => e.type === type).forEach(e => { counts[new Date(e.time).getMonth()]++; });
+  return { labels, milkCounts: counts };
+}
+function bucketizeMl(range, evs) {
+  const n = range === 'week' ? 7 : range === 'month' ? 5 : 12;
+  const breastMl = new Array(n).fill(0), formulaMl = new Array(n).fill(0);
+  evs.filter(e => e.type === 'milk').forEach(e => {
+    let idx;
+    const d = new Date(e.time);
+    if (range === 'week') idx = (d.getDay() + 6) % 7;
+    else if (range === 'month') idx = Math.min(4, Math.floor((d.getDate() - 1) / 7));
+    else idx = d.getMonth();
+    breastMl[idx] += e.breastMl || 0; formulaMl[idx] += e.formulaMl || 0;
+  });
+  return { breastMl, formulaMl };
+}
+
+function renderGrowthStats(state) {
+  const gm = state.growthMetric;
+  const baby = Store.data.settings;
+  const hasProfile = !!(baby.babyBirth && baby.babySex);
+  const AGES = [0, 3, 6, 9, 12, 15, 18, 21, 24];
+  const PCTS = [3, 15, 50, 85, 97];
+  const meta = { weight: { unit: 'kg', label: '體重', yr: [2, 16] }, height: { unit: 'cm', label: '身高', yr: [45, 95] }, head: { unit: 'cm', label: '頭圍', yr: [32, 52] } }[gm];
+  const ageOf = (ds) => (new Date(ds) - new Date(baby.babyBirth)) / 86400000 / 30.4375;
+  const GW = 320, GH = 210, mxl = 30, mxr = 14, gmt = 10, gmb = 22;
+  const sx = (age) => mxl + Math.max(0, Math.min(24, age)) / 24 * (GW - mxl - mxr);
+  const [yr0, yr1] = meta.yr;
+  const sy = (v) => (GH - gmb) - (Math.max(yr0, Math.min(yr1, v)) - yr0) / (yr1 - yr0) * (GH - gmb - gmt);
+  let gk = '';
+  for (let t = 0; t <= 4; t++) { const v = yr0 + (yr1 - yr0) * t / 4; const y = sy(v); gk += `<line x1="${mxl}" y1="${y}" x2="${GW - mxr}" y2="${y}" stroke="var(--grid)" stroke-width="1"/><text x="${mxl - 4}" y="${y + 3}" font-size="8" fill="var(--text3)" text-anchor="end">${Math.round(v)}</text>`; }
+  [0, 6, 12, 18, 24].forEach(a => gk += `<text x="${sx(a)}" y="${GH - 6}" font-size="8" fill="var(--text3)" text-anchor="middle">${a}m</text>`);
+  if (hasProfile) {
+    const sex = baby.babySex;
+    PCTS.forEach(p => {
+      const pts = AGES.map(a => `${sx(a)},${sy(whoValueAtPercentile(gm, sex, a, p))}`).join(' ');
+      const mid = p === 50;
+      gk += `<polyline points="${pts}" fill="none" stroke="${mid ? 'var(--accent)' : 'var(--track)'}" stroke-width="${mid ? 2 : 1}" ${mid ? '' : 'stroke-dasharray="3 3"'}/>`;
+      gk += `<text x="${GW - mxr + 1}" y="${sy(whoValueAtPercentile(gm, sex, 24, p)) + 3}" font-size="7" fill="${mid ? 'var(--accent)' : 'var(--text3)'}">${p}</text>`;
+    });
+  }
+  const growth = Store.liveGrowth();
+  const bpts = growth.map(r => ({ a: hasProfile ? ageOf(r.date) : null, v: r[gm], date: r.date, id: r.id })).filter(p => p.v != null && (!hasProfile || (p.a >= 0 && p.a <= 24.5))).sort((a, b) => hasProfile ? a.a - b.a : new Date(a.date) - new Date(b.date));
+  if (bpts.length) {
+    const px = (p, i) => hasProfile ? sx(p.a) : (mxl + (bpts.length === 1 ? 0.5 : i / (bpts.length - 1)) * (GW - mxl - mxr));
+    gk += `<polyline points="${bpts.map((p, i) => px(p, i) + ',' + sy(p.v)).join(' ')}" fill="none" stroke="#FF8C6B" stroke-width="2.5"/>`;
+    bpts.forEach((p, i) => gk += `<circle cx="${px(p, i)}" cy="${sy(p.v)}" r="4" fill="#FF8C6B" stroke="var(--card)" stroke-width="1.5"/>`);
+  }
+  const chartSvg = `<svg viewBox="0 0 ${GW} ${GH}" style="width:100%;height:auto;overflow:visible;">${gk}</svg>`;
+  const metricBtns = `<div class="seg" style="margin-bottom:14px;">${[['weight', '⚖️ 體重'], ['height', '📏 身高'], ['head', '🧠 頭圍']].map(([k, l]) => `<button class="${gm === k ? 'active' : ''}" onclick="A.set({growthMetric:'${k}'})">${l}</button>`).join('')}</div>`;
+  const gList = growth.slice().sort((a, b) => new Date(b.date) - new Date(a.date)).map(r => `<div style="display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border-bottom:1px solid var(--line);"><span style="font-size:12.5px;color:var(--text2);">${esc(r.date)}</span><span style="font-size:13px;font-weight:700;color:var(--text);">⚖️ ${r.weight ?? '—'}  📏 ${r.height ?? '—'}  🧠 ${r.head ?? '—'}</span></div>`).join('');
+  const note = hasProfile ? '依 WHO LMS 對照表計算之百分位曲線（3/15/50/85/97），僅供參考、非醫療診斷' : '填寫「寶寶資料」的生日與性別後，會顯示 WHO 百分位曲線';
+
+  return metricBtns + sCard(`${meta.label} 成長曲線（${meta.unit}）`, chartSvg + `<p style="font-size:10px;color:var(--text3);margin-top:8px;text-align:center;line-height:1.4;">${note}</p>`)
+    + `<div class="card" style="overflow:hidden;">${growth.length ? gList : `<p style="font-size:13px;color:var(--text3);text-align:center;padding:24px 0;">還沒有成長記錄，點下方 ＋ 新增</p>`}</div>`;
+}
+
+function renderStats(state) {
+  const tabBar = `<div class="seg" style="margin-bottom:14px;">${[['feed', '🍼 餵養'], ['growth', '📈 成長']].map(([k, l]) => `<button class="${state.statsTab === k ? 'active' : ''}" onclick="A.set({statsTab:'${k}'})">${l}</button>`).join('')}</div>`;
+  return `<div class="ns" style="flex:1;min-height:0;padding-bottom:18px;">
+    ${headerBar('統計')}
+    <div style="padding:8px 16px 0;">${tabBar}${state.statsTab === 'growth' ? renderGrowthStats(state) : renderFeedStats(state)}</div>
+  </div>`;
+}
+
+// ============================= RECORDS =============================
+function renderRecords(state) {
+  const filter = state.recordsFilter;
+  const evs = Store.liveEvents().filter(e => filter === 'all' || e.type === filter).sort((a, b) => new Date(b.time) - new Date(a.time));
+  const chips = `<div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">${[['all', '全部'], ['milk', '🍼 喝奶'], ['poop', '💩 排便'], ['pee', '💧 尿尿']].map(([k, l]) => `<button onclick="A.set({recordsFilter:'${k}'})" style="padding:8px 14px;border:none;border-radius:12px;font-size:12.5px;font-weight:700;font-family:inherit;background:${filter === k ? 'var(--accent)' : 'var(--card2)'};color:${filter === k ? '#fff' : 'var(--text2)'};">${l}</button>`).join('')}</div>`;
+  const row = (r) => {
+    let label;
+    if (r.type === 'milk') { const mix = r.breastMl > 0 && r.formulaMl > 0; label = '喝奶 ' + (mix ? (r.breastMl + '+' + r.formulaMl + 'ml ・混合') : ((r.amountMl || 0) + 'ml ・' + (r.formulaMl > 0 ? '配方乳' : '母乳'))); }
+    else label = r.type === 'poop' ? '排便' : '尿尿';
+    const d = new Date(r.time);
+    return `<div onclick='A.openEditRec(${JSON.stringify(r).replace(/'/g, "&#39;")})' style="display:flex;align-items:center;gap:12px;padding:13px 14px;border-bottom:1px solid var(--line);cursor:pointer;">
+      <div style="width:40px;height:40px;border-radius:13px;background:${tintBg(r)};display:flex;align-items:center;justify-content:center;font-size:19px;flex-shrink:0;">${emojiOf(r.type)}</div>
+      <div style="flex:1;"><p style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:1px;">${label}</p><p style="font-size:12px;color:var(--text2);">${d.toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric' })} ${hm(d)} · ${esc(r.by || '未命名')}</p></div>
+      <svg width="7" height="12" viewBox="0 0 7 12" fill="none"><path d="M1 1l5 5-5 5" stroke="var(--text3)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>`;
+  };
+  const list = evs.length ? `<div class="card" style="overflow:hidden;">${evs.map(row).join('')}</div>` : `<div style="text-align:center;padding:48px 0;color:var(--text3);font-size:13px;">沒有符合的紀錄</div>`;
+  return `<div class="ns" style="flex:1;min-height:0;padding-bottom:18px;">
+    ${headerBar('紀錄')}
+    <div style="padding:8px 16px 0;">${chips}${list}</div>
+  </div>`;
+}
+
+// ============================= SETTINGS =============================
+function sectionLabel(t) { return `<p style="font-size:12px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin:0 6px 8px;">${t}</p>`; }
+function durRow(type, label, emoji) {
+  const d = Store.data.settings.duration[type];
+  const seg = (mode, txt) => `<button onclick="A.setDurationMode('${type}','${mode}')" style="padding:6px 12px;border:none;border-radius:9px;font-size:12px;font-weight:700;font-family:inherit;background:${d.mode === mode ? 'var(--card)' : 'transparent'};color:${d.mode === mode ? 'var(--text)' : 'var(--text2)'};box-shadow:${d.mode === mode ? '0 1px 5px var(--shadow)' : 'none'};">${txt}</button>`;
+  const mbtn = (t, delta) => `<button onclick="A.setDurationMin('${type}',${delta})" style="width:30px;height:30px;border-radius:50%;border:1.5px solid var(--inpBorder);background:var(--card);font-size:16px;font-weight:700;color:var(--text);font-family:inherit;line-height:1;">${t}</button>`;
+  return `<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 0;border-top:1px solid var(--line);">
+    <span style="font-size:14px;font-weight:700;color:var(--text);">${emoji} ${label}</span>
+    <div style="display:flex;align-items:center;gap:10px;">
+      <div style="display:flex;background:var(--card2);border-radius:11px;padding:3px;">${seg('end', '結束')}${seg('start', '開始')}</div>
+      <div style="display:flex;align-items:center;gap:5px;">${mbtn('−', -5)}<span style="min-width:34px;text-align:center;font-size:14px;font-weight:700;color:var(--text);">${d.minutes}分</span>${mbtn('+', 5)}</div>
+    </div>
+  </div>`;
+}
+function babyAgeLabel() {
+  const birth = Store.data.settings.babyBirth;
+  if (!birth) return '尚未設定生日';
+  const mo = (new Date() - new Date(birth)) / 86400000 / 30.4375;
+  if (mo < 0) return '即將出生';
+  return mo < 1 ? Math.round(mo * 30.4) + ' 天大' : Math.floor(mo) + ' 個月大';
+}
+function renderSettings(state) {
+  const s = Store.data.settings;
+  const sexBtn = (val, label) => `<button onclick="A.setBabySex('${val}')" style="flex:1;padding:9px;border-radius:10px;border:none;font-size:13px;font-weight:${s.babySex === val ? 700 : 600};cursor:pointer;background:${s.babySex === val ? 'var(--card)' : 'transparent'};color:${s.babySex === val ? 'var(--text)' : 'var(--text2)'};box-shadow:${s.babySex === val ? '0 1px 5px var(--shadow)' : 'none'};">${label}</button>`;
+  const themeOpt = (val, label) => `<button onclick="A.setTheme('${val}')" style="flex:1;padding:9px 0;border:none;border-radius:11px;font-size:13px;font-weight:700;font-family:inherit;background:${state.theme === val ? 'var(--card)' : 'transparent'};color:${state.theme === val ? 'var(--text)' : 'var(--text2)'};box-shadow:${state.theme === val ? '0 1px 5px var(--shadow)' : 'none'};">${label}</button>`;
+  const connected = Sync.hasCreds();
+
+  return `<div class="ns" style="flex:1;min-height:0;padding-bottom:18px;">
+    ${headerBar('設定')}
+    <div style="padding:14px 16px 0;">
+      ${sectionLabel('寶寶資料（所有裝置共用）')}
+      <div class="card" style="padding:20px 18px;">
+        <div style="display:flex;align-items:center;gap:14px;margin-bottom:16px;">
+          <div style="width:60px;height:60px;border-radius:50%;background:linear-gradient(135deg,#FFCC70,#FF8C6B);display:flex;align-items:center;justify-content:center;font-size:30px;flex-shrink:0;">👶</div>
+          <div style="flex:1;min-width:0;">
+            <input type="text" value="${esc(s.babyName)}" onchange="A.setBabyName(this.value)" placeholder="寶寶名字" style="border:none;background:transparent;font-size:21px;font-weight:800;padding:0;color:var(--text);border-radius:0;" />
+            <p style="font-size:12px;color:var(--text2);margin-top:2px;">${babyAgeLabel()}</p>
+          </div>
+        </div>
+        <p style="font-size:11px;color:var(--text2);font-weight:600;margin-bottom:5px;">生日</p>
+        <input type="date" value="${esc(s.babyBirth)}" onchange="A.setBabyBirth(this.value)" style="margin-bottom:12px;" />
+        <p style="font-size:11px;color:var(--text2);font-weight:600;margin-bottom:6px;">性別（用於成長百分位）</p>
+        <div style="display:flex;background:var(--card2);border-radius:14px;padding:4px;">${sexBtn('boy', '👦 男生')}${sexBtn('girl', '👧 女生')}</div>
+        <p style="font-size:10.5px;color:var(--text3);margin-top:10px;line-height:1.5;">寶寶資料屬於所有照顧者共用（會隨同步在各裝置一致）；下方「我是…」才是這支手機自己的身分。</p>
+      </div>
+    </div>
+    <div style="padding:18px 16px 0;">
+      ${sectionLabel('這支手機的使用者')}
+      <div class="card" style="padding:16px;">
+        <p style="font-size:11px;color:var(--text2);font-weight:600;margin-bottom:7px;">我是…（之後每筆記錄會標記成這個名字）</p>
+        <input type="text" value="${esc(Store.caregiver)}" onchange="A.setCaregiver(this.value)" placeholder="爸爸、媽媽、阿嬤、保母…" />
+      </div>
+    </div>
+    <div style="padding:18px 16px 0;">
+      ${sectionLabel('外觀')}
+      <div class="card" style="padding:14px 16px;">
+        <div style="display:flex;background:var(--card2);border-radius:14px;padding:4px;">${themeOpt('day', '☀️ 日間')}${themeOpt('night', '🌙 夜間')}${themeOpt('auto', '🔄 自動')}</div>
+        <p style="font-size:11px;color:var(--text3);margin-top:10px;line-height:1.5;">「自動」會跟隨系統的深淺色設定切換。夜間餵奶時建議用夜間模式，降低亮度不刺眼。</p>
+      </div>
+    </div>
+    <div style="padding:18px 16px 0;">
+      ${sectionLabel('事件時長')}
+      <div class="card" style="padding:6px 16px;">
+        <p style="font-size:11px;color:var(--text3);padding:10px 0 4px;line-height:1.5;">用於匯出日曆時決定事件起訖。<b style="color:var(--text2);">結束</b>=事件時間當結束往前推；<b style="color:var(--text2);">開始</b>=當開始往後推；分鐘設 0 即起訖相同。</p>
+        ${durRow('milk', '喝奶', '🍼')}${durRow('poop', '排便', '💩')}${durRow('pee', '尿尿', '💧')}
+      </div>
+    </div>
+    <div style="padding:18px 16px 0;">
+      ${sectionLabel('匯出 Google 日曆')}
+      <div class="card" style="padding:16px;">
+        <div style="display:flex;gap:10px;margin-bottom:8px;">
+          <div style="flex:1;"><p style="font-size:11px;color:var(--text2);font-weight:600;margin-bottom:5px;">從</p><input type="date" value="${esc(state.exportFrom)}" onchange="A.setExportFrom(this.value)" /></div>
+          <div style="flex:1;"><p style="font-size:11px;color:var(--text2);font-weight:600;margin-bottom:5px;">到</p><input type="date" value="${esc(state.exportTo)}" onchange="A.setExportTo(this.value)" /></div>
+        </div>
+        <p style="font-size:11px;color:var(--text3);margin-bottom:14px;">含頭含尾，自由框選範圍。CSV 為一次性快照匯入，重複匯入會產生重複事件。</p>
+        <button onclick="A.doExport()" class="primary-btn" style="box-shadow:0 4px 16px rgba(240,165,0,.38);padding:15px;">⬇ 匯出 CSV</button>
+      </div>
+    </div>
+    <div style="padding:18px 16px 0;">
+      ${sectionLabel('同步與帳號')}
+      <div class="card" style="padding:16px;">
+        <div style="display:flex;align-items:center;gap:10px;background:var(--card2);border-radius:14px;padding:12px 14px;margin-bottom:14px;">
+          <div style="width:8px;height:8px;border-radius:50%;background:${connected ? '#5CB85C' : '#C8965A'};"></div>
+          <div style="flex:1;"><p style="font-size:13px;font-weight:700;color:${connected ? '#4FA84F' : 'var(--text2)'};">${connected ? '已設定' : '尚未設定'}</p><p style="font-size:11px;color:var(--text2);">上次同步 ${esc(Sync.lastSync() || '—')}</p></div>
+          <button onclick="A.doSync()" style="background:var(--card);border:1.5px solid var(--inpBorder);border-radius:12px;padding:7px 14px;font-size:12px;font-weight:700;color:#4FA84F;">立即同步</button>
+        </div>
+        <p style="font-size:11px;color:var(--text2);font-weight:600;margin-bottom:5px;">GitHub Token</p>
+        <input type="text" value="${esc(Store.local('gh_token') || '')}" onchange="A.setGhToken(this.value)" placeholder="ghp_••••••••••••••••" style="margin-bottom:10px;" />
+        <p style="font-size:11px;color:var(--text2);font-weight:600;margin-bottom:5px;">Repo 位置</p>
+        <input type="text" value="${esc(Store.local('gh_repo') || '')}" onchange="A.setGhRepo(this.value)" placeholder="username/baby-records" />
+        <div style="display:flex;gap:6px;align-items:flex-start;margin-top:12px;background:var(--card2);border-radius:12px;padding:10px 12px;">
+          <span style="font-size:13px;">🔒</span><p style="font-size:11px;color:var(--text2);line-height:1.5;">此憑證只存在本機、不會外傳。僅用於與你自己的 repo 同步。建議使用 fine-grained token，權限僅限該 repo 的 contents 讀寫。</p>
+        </div>
+      </div>
+    </div>
+    <div style="padding:18px 16px 0;">
+      ${sectionLabel('預設奶量')}
+      <div class="card" style="padding:16px;">
+        <p style="font-size:11px;color:var(--text3);margin-bottom:12px;line-height:1.5;">開「喝奶」時自動帶入的預設量。</p>
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin:0 2px 2px;"><span style="font-size:13px;font-weight:700;color:#FF7A56;">🤱 母乳</span><span style="font-size:14px;font-weight:800;color:var(--text);">${s.defaultMilk.breast} ml</span></div>
+        <div style="margin:0 2px 12px;"><input type="range" min="0" max="300" step="5" value="${s.defaultMilk.breast}" oninput="A.setDefMilk('breast',this.value)" /></div>
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin:0 2px 2px;"><span style="font-size:13px;font-weight:700;color:#E8A33D;">🍼 配方</span><span style="font-size:14px;font-weight:800;color:var(--text);">${s.defaultMilk.formula} ml</span></div>
+        <div style="margin:0 2px;"><input type="range" min="0" max="300" step="5" value="${s.defaultMilk.formula}" oninput="A.setDefMilk('formula',this.value)" /></div>
+      </div>
+    </div>
+    <div style="padding:18px 16px 24px;">
+      ${sectionLabel('Alarm 時間微調')}
+      <div class="card" style="padding:16px;">
+        <p style="font-size:11px;color:var(--text3);margin-bottom:14px;line-height:1.5;">調整首頁「預計下一餐」的提示時間（畫面提示，非系統鬧鐘）。</p>
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <span style="font-size:15px;font-weight:800;color:var(--text);">⏰ ${alarmLabel(s.alarmOffsetMinutes)}</span>
+          <div style="display:flex;align-items:center;gap:12px;">
+            <button onclick="A.decAlarm()" style="width:36px;height:36px;border-radius:50%;border:1.5px solid var(--inpBorder);background:var(--card);font-size:19px;font-weight:700;color:var(--text);line-height:1;">−</button>
+            <button onclick="A.incAlarm()" style="width:36px;height:36px;border-radius:50%;border:1.5px solid var(--inpBorder);background:var(--card);font-size:19px;font-weight:700;color:var(--text);line-height:1;">+</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+function alarmLabel(n) { n = n || 0; return n === 0 ? '準時' : (n < 0 ? `提前 ${-n} 分` : `延後 ${n} 分`); }
+
+// ============================= SHEETS =============================
+function timeStepper(state) {
+  const pad = (n) => String(n).padStart(2, '0');
+  const stepBtn = (label, fn) => `<button onclick="${fn}" style="width:38px;height:38px;border-radius:50%;border:none;background:var(--card);color:var(--text);font-size:20px;font-weight:700;box-shadow:0 2px 6px var(--shadow);font-family:inherit;line-height:1;">${label}</button>`;
+  const unit = (val, suffix, dec, inc) => `<div style="display:flex;align-items:center;gap:12px;">${stepBtn('−', dec)}<div style="min-width:58px;text-align:center;"><span style="font-size:30px;font-weight:800;letter-spacing:-1px;color:var(--text);">${val}</span><span style="font-size:13px;color:var(--text2);margin-left:3px;">${suffix}</span></div>${stepBtn('+', inc)}</div>`;
+  return `<div style="display:flex;justify-content:center;gap:22px;background:var(--card2);border-radius:18px;padding:16px 0;">
+    ${unit(pad(state.rt.h), '時', "A.setH(-1)", "A.setH(1)")}
+    ${unit(pad(state.rt.m), '分', "A.setM(-5)", "A.setM(5)")}
+  </div>`;
+}
+
+function renderMilkSheet(state) {
+  return `<div class="sheet-overlay" onclick="A.closeSheet()">
+    <div class="sheet" onclick="event.stopPropagation()">
+      <div class="sheet-handle"></div>
+      <h2 style="font-size:23px;font-weight:800;margin-bottom:16px;color:var(--text);">記錄喝奶 🍼</h2>
+      <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">時間</p>
+      ${timeStepper(state)}
+      <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin:16px 0 4px;">奶量（母乳 ＋ 配方，可混合）</p>
+      <div style="text-align:center;margin-bottom:6px;"><span style="font-size:54px;font-weight:800;line-height:1;letter-spacing:-2px;color:var(--text);">${state.milkBreast + state.milkFormula}</span><span style="font-size:18px;font-weight:500;color:var(--text2);margin-left:5px;">ml 總計</span></div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin:6px 4px 2px;"><span style="font-size:13px;font-weight:700;color:#FF7A56;">🤱 母乳</span><span style="font-size:15px;font-weight:800;color:var(--text);">${state.milkBreast} ml</span></div>
+      <div style="margin:0 4px 14px;"><input type="range" min="0" max="300" step="5" value="${state.milkBreast}" oninput="A.setBreast(this.value)" /></div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin:6px 4px 2px;"><span style="font-size:13px;font-weight:700;color:#E8A33D;">🍼 配方</span><span style="font-size:15px;font-weight:800;color:var(--text);">${state.milkFormula} ml</span></div>
+      <div style="margin:0 4px 22px;"><input type="range" min="0" max="300" step="5" value="${state.milkFormula}" oninput="A.setFormula(this.value)" /></div>
+      <button onclick="A.confirmRecord()" class="primary-btn">✓ 完成記錄</button>
+      <button onclick="A.closeSheet()" class="text-btn">取消</button>
+    </div>
+  </div>`;
+}
+function renderEditSheet(state) {
+  const label = state.recordType === 'poop' ? '排便 💩' : '尿尿 💧';
+  return `<div class="sheet-overlay" onclick="A.closeSheet()">
+    <div class="sheet" onclick="event.stopPropagation()">
+      <div class="sheet-handle"></div>
+      <h2 style="font-size:23px;font-weight:800;margin-bottom:6px;color:var(--text);">補記${label}</h2>
+      <p style="font-size:13px;color:var(--text2);margin-bottom:18px;">調整時間後送出。</p>
+      <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">時間</p>
+      ${timeStepper(state)}
+      <button onclick="A.confirmRecord()" class="primary-btn" style="margin-top:24px;">✓ 完成記錄</button>
+      <button onclick="A.closeSheet()" class="text-btn">取消</button>
+    </div>
+  </div>`;
+}
+function renderEditRecSheet(state) {
+  const isMilk = state.recordType === 'milk';
+  const isDiaper = !isMilk;
+  const typeSeg = isDiaper ? `<p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin:16px 0 8px;">類型</p>
+    <div style="display:flex;background:var(--card2);border-radius:18px;padding:4px;margin-bottom:12px;">
+      <button onclick="A.setEditType('poop')" style="flex:1;padding:10px;border-radius:14px;border:none;font-size:14px;font-weight:${state.recordType === 'poop' ? 700 : 600};background:${state.recordType === 'poop' ? 'var(--card)' : 'transparent'};color:${state.recordType === 'poop' ? 'var(--text)' : 'var(--text2)'};box-shadow:${state.recordType === 'poop' ? '0 2px 8px var(--shadow)' : 'none'};">💩 排便</button>
+      <button onclick="A.setEditType('pee')" style="flex:1;padding:10px;border-radius:14px;border:none;font-size:14px;font-weight:${state.recordType === 'pee' ? 700 : 600};background:${state.recordType === 'pee' ? 'var(--card)' : 'transparent'};color:${state.recordType === 'pee' ? 'var(--text)' : 'var(--text2)'};box-shadow:${state.recordType === 'pee' ? '0 2px 8px var(--shadow)' : 'none'};">💧 尿尿</button>
+    </div>
+    <button onclick="A.editAddOther()" style="width:100%;background:var(--card2);border:1.5px dashed var(--inpBorder);border-radius:14px;padding:12px;font-size:14px;font-weight:700;color:var(--text2);margin-bottom:6px;">${state.recordType === 'poop' ? '＋ 同時加上尿尿 💧' : '＋ 同時加上排便 💩'}</button>` : '';
+  const milkBlock = isMilk ? `<p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin:16px 0 4px;">奶量（母乳 ＋ 配方）</p>
+    <div style="text-align:center;margin-bottom:6px;"><span style="font-size:48px;font-weight:800;line-height:1;letter-spacing:-2px;color:var(--text);">${state.milkBreast + state.milkFormula}</span><span style="font-size:17px;font-weight:500;color:var(--text2);margin-left:5px;">ml 總計</span></div>
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin:6px 4px 2px;"><span style="font-size:13px;font-weight:700;color:#FF7A56;">🤱 母乳</span><span style="font-size:15px;font-weight:800;color:var(--text);">${state.milkBreast} ml</span></div>
+    <div style="margin:0 4px 12px;"><input type="range" min="0" max="300" step="5" value="${state.milkBreast}" oninput="A.setBreast(this.value)" /></div>
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin:6px 4px 2px;"><span style="font-size:13px;font-weight:700;color:#E8A33D;">🍼 配方</span><span style="font-size:15px;font-weight:800;color:var(--text);">${state.milkFormula} ml</span></div>
+    <div style="margin:0 4px 14px;"><input type="range" min="0" max="300" step="5" value="${state.milkFormula}" oninput="A.setFormula(this.value)" /></div>` : '';
+  return `<div class="sheet-overlay" onclick="A.closeSheet()">
+    <div class="sheet" onclick="event.stopPropagation()" style="padding-bottom:30px;">
+      <div class="sheet-handle"></div>
+      <h2 style="font-size:23px;font-weight:800;margin-bottom:16px;color:var(--text);">編輯記錄</h2>
+      <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">時間</p>
+      ${timeStepper(state)}
+      ${typeSeg}
+      ${milkBlock}
+      <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin:16px 0 8px;">由誰處理</p>
+      <input id="f-edit-by" type="text" value="${esc(state.editBy)}" placeholder="名字" style="margin-bottom:14px;" />
+      <button onclick="A.saveEdit()" class="primary-btn" style="padding:16px;font-size:16px;">✓ 儲存變更</button>
+      <button onclick="A.deleteFromEdit()" style="width:100%;background:transparent;border:none;padding:12px;font-size:14px;font-weight:700;color:#E5573D;margin-top:4px;">🗑️ 刪除這筆</button>
+    </div>
+  </div>`;
+}
+function renderGrowthSheet(state) {
+  return `<div class="sheet-overlay" onclick="A.closeSheet()">
+    <div class="sheet" onclick="event.stopPropagation()">
+      <div class="sheet-handle"></div>
+      <h2 style="font-size:23px;font-weight:800;margin-bottom:16px;color:var(--text);">記錄成長 📈</h2>
+      <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">日期</p>
+      <input type="date" value="${esc(state.gDate)}" onchange="A.set({gDate:this.value})" style="margin-bottom:16px;" />
+      <div style="display:flex;gap:10px;">
+        <div style="flex:1;"><p style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:6px;">⚖️ 體重 kg</p><input id="f-g-weight" type="text" inputmode="decimal" value="${esc(state.gWeight)}" placeholder="5.4" /></div>
+        <div style="flex:1;"><p style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:6px;">📏 身高 cm</p><input id="f-g-height" type="text" inputmode="decimal" value="${esc(state.gHeight)}" placeholder="58" /></div>
+        <div style="flex:1;"><p style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:6px;">🧠 頭圍 cm</p><input id="f-g-head" type="text" inputmode="decimal" value="${esc(state.gHead)}" placeholder="39" /></div>
+      </div>
+      <p style="font-size:10.5px;color:var(--text3);margin:10px 2px 0;">可只填部分，留空的不記。</p>
+      <button onclick="A.saveGrowth()" class="primary-btn" style="margin-top:18px;">✓ 完成記錄</button>
+      <button onclick="A.closeSheet()" class="text-btn">取消</button>
+    </div>
+  </div>`;
+}
+
+function renderDeleteConfirm(state) {
+  const rec = Store.data.events.find(e => e.id === state.confirmDelId);
+  if (!rec) return '';
+  const mix = rec.breastMl > 0 && rec.formulaMl > 0;
+  const tn = rec.type === 'milk' ? ('喝奶 ' + (mix ? (rec.breastMl + '+' + rec.formulaMl + 'ml') : ((rec.amountMl || 0) + 'ml'))) : rec.type === 'poop' ? '排便' : '尿尿';
+  const delText = tn + ' · ' + hm(new Date(rec.time));
+  return `<div style="position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);backdrop-filter:blur(4px);z-index:90;display:flex;align-items:center;justify-content:center;" onclick="A.cancelDelete()">
+    <div onclick="event.stopPropagation()" style="background:var(--card);border-radius:26px;padding:26px 24px 20px;width:280px;text-align:center;box-shadow:0 24px 80px var(--shadow2);animation:pop .35s cubic-bezier(.17,.67,.32,1.2);">
+      <div style="font-size:40px;margin-bottom:8px;">${emojiOf(rec.type)}</div>
+      <p style="font-size:16px;font-weight:800;margin-bottom:3px;color:var(--text);">刪除這筆記錄？</p>
+      <p style="font-size:13px;color:var(--text2);margin-bottom:18px;">${delText}</p>
+      <div style="display:flex;gap:10px;">
+        <button onclick="A.cancelDelete()" style="flex:1;background:var(--card2);border:none;border-radius:14px;padding:13px;font-size:15px;font-weight:700;color:var(--text2);">取消</button>
+        <button onclick="A.doDelete()" style="flex:1;background:#E5573D;border:none;border-radius:14px;padding:13px;font-size:15px;font-weight:800;color:#fff;box-shadow:0 4px 14px rgba(229,87,61,.4);">刪除</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderWelcome(state) {
+  if (!state.showWelcome) return '';
+  return `<div style="position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.55);backdrop-filter:blur(8px);z-index:110;display:flex;align-items:center;justify-content:center;padding:24px;">
+    <div style="background:var(--card);border-radius:28px;padding:28px 24px 22px;width:300px;text-align:center;box-shadow:0 24px 80px var(--shadow2);animation:pop .35s cubic-bezier(.17,.67,.32,1.2);">
+      <div style="font-size:46px;margin-bottom:10px;">👶</div>
+      <h2 style="font-size:20px;font-weight:800;color:var(--text);margin-bottom:6px;">你是誰呢？</h2>
+      <p style="font-size:12.5px;color:var(--text2);margin-bottom:18px;line-height:1.5;">這支手機之後記錄的事件，都會標記成你的名字。</p>
+      <input id="f-welcome-name" type="text" value="${esc(state.welcomeName)}" placeholder="爸爸、媽媽、阿嬤…" style="text-align:center;margin-bottom:16px;" />
+      <button onclick="A.closeWelcome()" class="primary-btn" style="padding:15px;font-size:16px;box-shadow:0 6px 20px rgba(240,165,0,.4);">開始記錄 →</button>
+    </div>
+  </div>`;
+}
+
+function renderToast(state) {
+  const t = state.toast;
+  if (!t) return '';
+  if (!t.addType) {
+    return `<div class="toast-wrap" style="pointer-events:none;">
+      <div style="background:var(--card);border-radius:30px;padding:28px 42px;text-align:center;box-shadow:0 24px 80px var(--shadow2);animation:pop .4s cubic-bezier(.17,.67,.32,1.2),fade 1.7s ease forwards;">
+        <div style="font-size:50px;margin-bottom:10px;">${t.emoji}</div><p style="font-size:17px;font-weight:800;color:var(--text);">${esc(t.msg)}</p>
+      </div></div>`;
+  }
+  const addLabel = t.addType === 'pee' ? '＋ 尿尿 💧' : '＋ 排便 💩';
+  return `<div class="toast-wrap" onclick="A.dismissToast()">
+    <div onclick="event.stopPropagation()" style="background:var(--card);border-radius:30px;padding:26px 30px 22px;text-align:center;box-shadow:0 24px 80px var(--shadow2);animation:pop .4s cubic-bezier(.17,.67,.32,1.2);">
+      <div style="font-size:48px;margin-bottom:8px;">${t.emoji}</div>
+      <p style="font-size:17px;font-weight:800;margin-bottom:3px;color:var(--text);">${esc(t.msg)}</p>
+      <p style="font-size:12px;color:var(--text2);margin-bottom:16px;">同一片尿布也有？</p>
+      <button onclick="A.addOther()" style="background:linear-gradient(135deg,#F0A500,#E09000);border:none;border-radius:14px;padding:12px 24px;font-size:15px;font-weight:800;color:#fff;box-shadow:0 4px 14px rgba(240,165,0,.4);">${addLabel}</button>
+    </div></div>`;
+}
+
+// ============================= ROOT =============================
+function AppRef() { return window.A; }
+
+function renderScreen(state) {
+  if (state.screen === 'stats') return renderStats(state);
+  if (state.screen === 'records') return renderRecords(state);
+  if (state.screen === 'config') return renderSettings(state);
+  return renderHome(state);
+}
+function renderSheet(state) {
+  if (state.sheet === 'milk') return renderMilkSheet(state);
+  if (state.sheet === 'edit') return renderEditSheet(state);
+  if (state.sheet === 'editRec') return renderEditRecSheet(state);
+  if (state.sheet === 'growth') return renderGrowthSheet(state);
+  return '';
+}
+
+function render(state) {
+  _timelineMeta = null;
+  const screenHtml = renderScreen(state);
+  const html = `<div class="app">
+    ${screenHtml}
+    ${renderNav(state)}
+    ${renderSheet(state)}
+    ${renderDeleteConfirm(state)}
+    ${renderWelcome(state)}
+    ${renderToast(state)}
+  </div>`;
+  const root = document.getElementById('root');
+  root.innerHTML = html;
+  applyTheme(state);
+  if (_timelineMeta) {
+    window.A._trackNode = document.getElementById('timeline-track');
+    window.A._yToH = _timelineMeta.yToH;
+    window.A._axis = _timelineMeta.axis;
+  }
+  return root.querySelector('#scroll-area');
+}

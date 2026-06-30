@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>寶寶日誌</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>👶</text></svg>">
+<meta name="theme-color" content="#FAF6EF">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="root"></div>
+<!-- Plain classic scripts (no type="module") so this also works opened directly as a
+     local file (file://), where browsers block ES module loading. Order matters: each
+     file only references the others' globals from inside function bodies (never at
+     top-level), so this load order just needs every file present before main.js runs. -->
+<script src="js/who-data.js"></script>
+<script src="js/predict.js"></script>
+<script src="js/store.js"></script>
+<script src="js/csv.js"></script>
+<script src="js/sync.js"></script>
+<script src="js/views.js"></script>
+<script src="js/app.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
