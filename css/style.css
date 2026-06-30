@@ -1,14 +1,9 @@
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap');
 
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-html, body { height: 100%; }
-body {
-  background: var(--bg2);
-  font-family: 'DM Sans', 'PingFang TC', 'Microsoft JhengHei', system-ui, sans-serif;
-  overflow: hidden;
-}
-button { font-family: inherit; }
 
+/* data-theme lives on <html> (set in views.js applyTheme) so these custom properties
+   cascade down to every descendant — body, #root, .app, and everything inside it. */
 [data-theme=day] {
   --bg2:#E7E2D8; --bg:#FAF6EF; --card:#FFFFFF; --card2:#F3EEE3; --line:#F5F0E8;
   --track:#EDE8DF; --text:#1A130A; --text2:#9A7A50; --text3:#C8BEA8; --accent:#F0A500;
@@ -24,8 +19,31 @@ button { font-family: inherit; }
   --inpBg:#2C2720; --inpBorder:#3A332A; --shadow:rgba(0,0,0,.35); --shadow2:rgba(0,0,0,.55);
 }
 
+html {
+  /* Fallback solid color in case CSS vars somehow aren't ready yet (e.g. very first
+     paint before the inline boot script in <head> sets data-theme) — avoids a white
+     flash instead of just defaulting to the browser's white canvas. */
+  background: #16130E;
+  background: var(--bg2);
+}
+html, body {
+  height: 100%;
+  height: 100dvh; /* dynamic viewport height: accounts for mobile browser chrome that
+                     shows/hides, unlike 100vh which is notoriously wrong on mobile and
+                     either clips content or reveals unstyled space below the fold. */
+}
+body {
+  background: var(--bg2);
+  font-family: 'DM Sans', 'PingFang TC', 'Microsoft JhengHei', system-ui, sans-serif;
+  overflow: hidden;
+  overscroll-behavior: none; /* stop the whole page from rubber-banding / triggering the
+                                 browser's own pull-to-refresh, which fought with our own
+                                 in-app pull-to-sync gesture */
+}
+button { font-family: inherit; }
+
 #root {
-  height: 100vh; background: var(--bg2);
+  height: 100vh; height: 100dvh; background: var(--bg2);
   display: flex; justify-content: center; align-items: stretch; overflow: hidden;
 }
 .app {
@@ -43,6 +61,9 @@ input[type=range]::-moz-range-thumb { width: 22px; height: 22px; border-radius: 
 input[type=date], input[type=text] {
   font-family: inherit; font-size: 14px; color: var(--text); background: var(--inpBg);
   border: 1.5px solid var(--inpBorder); border-radius: 14px; padding: 11px 14px; width: 100%; outline: none;
+  min-width: 0; /* flex items default to min-width:auto, which refuses to shrink below
+                   intrinsic content size — native date inputs are wide enough on mobile
+                   that two side-by-side would overflow their card without this */
 }
 input[type=date]:focus, input[type=text]:focus { border-color: var(--accent); }
 

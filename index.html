@@ -8,6 +8,20 @@
 <meta name="theme-color" content="#FAF6EF">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="stylesheet" href="css/style.css">
+<script>
+// Set the theme attribute on <html> before first paint so there's no flash of the
+// wrong theme (or unstyled white) while the main scripts below are still loading.
+(function () {
+  try {
+    var pref = localStorage.getItem('bt_local_theme') || 'auto';
+    var sysDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    var night = pref === 'night' || (pref === 'auto' && sysDark);
+    document.documentElement.setAttribute('data-theme', night ? 'night' : 'day');
+  } catch (e) {
+    document.documentElement.setAttribute('data-theme', 'day');
+  }
+})();
+</script>
 </head>
 <body>
 <div id="root"></div>

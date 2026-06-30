@@ -294,7 +294,16 @@ const App = {
   },
   setGhToken(v) { Store.local('gh_token', v); this.rerender(); },
   setGhRepo(v) { Store.local('gh_repo', v); this.rerender(); },
-  doSync() { Sync.sync(); },
+  doSync() {
+    // Pull-to-refresh can fire from an ordinary scroll/swipe, not just a deliberate
+    // "sync now" tap — don't show a scary red failure banner for the expected case of
+    // "this device just hasn't been set up yet". Guide to settings instead.
+    if (!Sync.hasCreds()) {
+      this.toast('🔗', '請先到設定頁設定 GitHub Token 才能同步');
+      return;
+    }
+    Sync.sync();
+  },
 };
 
 window.A = App;

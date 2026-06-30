@@ -20,8 +20,11 @@ function emojiOf(t) { return t === 'milk' ? '🍼' : t === 'poop' ? '💩' : '�
 function applyTheme(state) {
   const sysDark = !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
   const effNight = state.theme === 'night' || (state.theme === 'auto' && sysDark);
-  const appEl = document.querySelector('.app');
-  if (appEl) appEl.setAttribute('data-theme', effNight ? 'night' : 'day');
+  // Set on <html>, not .app: CSS custom properties only cascade DOWN to descendants.
+  // .app is a descendant of body/#root, so those ancestors could never see --bg2 etc.
+  // when the attribute lived on .app — that's what was showing as a white background
+  // outside the 440px column (and bleeding through on mobile when 100vh misbehaves).
+  document.documentElement.setAttribute('data-theme', effNight ? 'night' : 'day');
   document.querySelector('meta[name=theme-color]')?.setAttribute('content', effNight ? '#16130E' : '#FAF6EF');
   return effNight;
 }
@@ -553,9 +556,11 @@ function renderSettings(state) {
     <div style="padding:18px 16px 0;">
       ${sectionLabel('匯出 Google 日曆')}
       <div class="card" style="padding:16px;">
-        <div style="display:flex;gap:10px;margin-bottom:8px;">
-          <div style="flex:1;"><p style="font-size:11px;color:var(--text2);font-weight:600;margin-bottom:5px;">從</p><input type="date" value="${esc(state.exportFrom)}" onchange="A.setExportFrom(this.value)" /></div>
-          <div style="flex:1;"><p style="font-size:11px;color:var(--text2);font-weight:600;margin-bottom:5px;">到</p><input type="date" value="${esc(state.exportTo)}" onchange="A.setExportTo(this.value)" /></div>
+        <div style="margin-bottom:8px;">
+          <p style="font-size:11px;color:var(--text2);font-weight:600;margin-bottom:5px;">從</p>
+          <input type="date" value="${esc(state.exportFrom)}" onchange="A.setExportFrom(this.value)" style="margin-bottom:10px;" />
+          <p style="font-size:11px;color:var(--text2);font-weight:600;margin-bottom:5px;">到</p>
+          <input type="date" value="${esc(state.exportTo)}" onchange="A.setExportTo(this.value)" />
         </div>
         <p style="font-size:11px;color:var(--text3);margin-bottom:14px;">含頭含尾，自由框選範圍。CSV 為一次性快照匯入，重複匯入會產生重複事件。</p>
         <button onclick="A.doExport()" class="primary-btn" style="box-shadow:0 4px 16px rgba(240,165,0,.38);padding:15px;">⬇ 匯出 CSV</button>
