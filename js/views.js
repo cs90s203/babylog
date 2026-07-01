@@ -674,9 +674,9 @@ function timeStepper(state) {
   </div>`;
 }
 
-function renderMilkSheet(state) {
+function renderMilkSheet(state, reopen) {
   return `<div class="sheet-overlay" onclick="A.closeSheet()">
-    <div class="sheet" onclick="event.stopPropagation()">
+    <div class="sheet" onclick="event.stopPropagation()" style="${sheetAnim(reopen)}">
       <div class="sheet-handle"></div>
       <h2 style="font-size:23px;font-weight:800;margin-bottom:16px;color:var(--text);">記錄喝奶 🍼</h2>
       <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">時間</p>
@@ -692,10 +692,10 @@ function renderMilkSheet(state) {
     </div>
   </div>`;
 }
-function renderEditSheet(state) {
+function renderEditSheet(state, reopen) {
   const label = state.recordType === 'poop' ? '排便 💩' : '尿尿 💧';
   return `<div class="sheet-overlay" onclick="A.closeSheet()">
-    <div class="sheet" onclick="event.stopPropagation()">
+    <div class="sheet" onclick="event.stopPropagation()" style="${sheetAnim(reopen)}">
       <div class="sheet-handle"></div>
       <h2 style="font-size:23px;font-weight:800;margin-bottom:6px;color:var(--text);">補記${label}</h2>
       <p style="font-size:13px;color:var(--text2);margin-bottom:18px;">調整時間後送出。</p>
@@ -706,7 +706,7 @@ function renderEditSheet(state) {
     </div>
   </div>`;
 }
-function renderEditRecSheet(state) {
+function renderEditRecSheet(state, reopen) {
   const isMilk = state.recordType === 'milk';
   const isDiaper = !isMilk;
   const typeSeg = isDiaper ? `<p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin:16px 0 8px;">類型</p>
@@ -722,7 +722,7 @@ function renderEditRecSheet(state) {
     <div style="display:flex;justify-content:space-between;align-items:baseline;margin:6px 4px 2px;"><span style="font-size:13px;font-weight:700;color:#E8A33D;">🍼 配方</span><span style="font-size:15px;font-weight:800;color:var(--text);">${state.milkFormula} ml</span></div>
     <div style="margin:0 4px 14px;"><input type="range" min="0" max="300" step="5" value="${state.milkFormula}" oninput="A.setFormula(this.value)" /></div>` : '';
   return `<div class="sheet-overlay" onclick="A.closeSheet()">
-    <div class="sheet" onclick="event.stopPropagation()" style="padding-bottom:30px;">
+    <div class="sheet" onclick="event.stopPropagation()" style="padding-bottom:30px;${sheetAnim(reopen)}">
       <div class="sheet-handle"></div>
       <h2 style="font-size:23px;font-weight:800;margin-bottom:16px;color:var(--text);">編輯記錄</h2>
       <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">時間</p>
@@ -736,9 +736,9 @@ function renderEditRecSheet(state) {
     </div>
   </div>`;
 }
-function renderGrowthSheet(state) {
+function renderGrowthSheet(state, reopen) {
   return `<div class="sheet-overlay" onclick="A.closeSheet()">
-    <div class="sheet" onclick="event.stopPropagation()">
+    <div class="sheet" onclick="event.stopPropagation()" style="${sheetAnim(reopen)}">
       <div class="sheet-handle"></div>
       <h2 style="font-size:23px;font-weight:800;margin-bottom:16px;color:var(--text);">記錄成長 📈</h2>
       <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">日期</p>
@@ -815,13 +815,26 @@ function renderScreen(state) {
   if (state.screen === 'config') return renderSettings(state);
   return renderHome(state);
 }
+// Every state change rebuilds the whole DOM (see render() below), so the sheet's
+// slide-up-from-bottom CSS animation would otherwise replay on every single re-render
+// while it's open — including every tick of dragging a range slider (oninput fires per
+// pixel) or every tap of the time stepper. That looked like the sheet "kept reopening"
+// and made sliders/time adjustment unusable. Track whether this is the same sheet
+// instance as last render (by sheet type + editingId) and suppress the animation if so;
+// only a genuine open (or switching to editing a different record) should animate in.
+let _lastSheetKey = null;
 function renderSheet(state) {
-  if (state.sheet === 'milk') return renderMilkSheet(state);
-  if (state.sheet === 'edit') return renderEditSheet(state);
-  if (state.sheet === 'editRec') return renderEditRecSheet(state);
-  if (state.sheet === 'growth') return renderGrowthSheet(state);
+  if (!state.sheet) { _lastSheetKey = null; return ''; }
+  const key = state.sheet + ':' + (state.editingId || '');
+  const reopen = key === _lastSheetKey;
+  _lastSheetKey = key;
+  if (state.sheet === 'milk') return renderMilkSheet(state, reopen);
+  if (state.sheet === 'edit') return renderEditSheet(state, reopen);
+  if (state.sheet === 'editRec') return renderEditRecSheet(state, reopen);
+  if (state.sheet === 'growth') return renderGrowthSheet(state, reopen);
   return '';
 }
+function sheetAnim(reopen) { return reopen ? 'animation:none;' : ''; }
 
 function render(state) {
   _timelineMeta = null;
