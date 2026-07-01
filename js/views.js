@@ -41,7 +41,6 @@ function backIcon() { return `<svg width="9" height="15" viewBox="0 0 9 15" fill
 
 function renderNav(state) {
   const s = state.screen;
-  const fabColor = 'var(--accent)';
   return `
   <div style="flex-shrink:0;height:84px;background:var(--nav);backdrop-filter:blur(10px);border-top:1px solid var(--line);display:flex;align-items:flex-start;justify-content:space-around;padding:10px 4px 0;z-index:20;">
     <button onclick="A.goHome()" style="background:none;border:none;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:56px;">
@@ -51,7 +50,7 @@ function renderNav(state) {
       ${navIcon('stats', s === 'stats')}<span style="font-size:10px;font-weight:700;color:${s === 'stats' ? 'var(--accent)' : 'var(--text3)'};">統計</span>
     </button>
     <button onclick="A.openGrowth()" style="background:none;border:none;display:flex;flex-direction:column;align-items:center;margin-top:-18px;min-width:60px;">
-      <div style="width:54px;height:54px;border-radius:50%;background:${fabColor};display:flex;align-items:center;justify-content:center;box-shadow:0 4px 18px rgba(240,165,0,.5);">
+      <div style="width:54px;height:54px;border-radius:50%;background:var(--fab);display:flex;align-items:center;justify-content:center;box-shadow:0 4px 18px var(--fabGlow);">
         <svg width="26" height="26" viewBox="0 0 26 26" fill="none"><line x1="13" y1="5" x2="13" y2="21" stroke="white" stroke-width="2.5" stroke-linecap="round"/><line x1="5" y1="13" x2="21" y2="13" stroke="white" stroke-width="2.5" stroke-linecap="round"/></svg>
       </div>
     </button>
