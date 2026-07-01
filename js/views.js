@@ -74,10 +74,13 @@ function headerBar(title) {
 // ============================= HOME =============================
 function renderSyncPill() {
   const st = Sync.state;
-  if (st === 'syncing') return `<div style="display:flex;align-items:center;gap:8px;color:var(--text2);font-size:12px;font-weight:600;"><div style="width:15px;height:15px;border:2px solid var(--track);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;"></div>同步中…</div>`;
-  if (st === 'done') return `<div style="display:flex;align-items:center;gap:6px;color:#4FA84F;font-size:12px;font-weight:700;">✓ 已同步</div>`;
-  if (st === 'fail') return `<div onclick="A.doSync()" style="cursor:pointer;display:flex;align-items:center;gap:6px;color:#D2654A;font-size:12px;font-weight:700;">⚠ ${esc(Sync.message || '同步失敗')}・點擊重試</div>`;
-  return `<div onclick="A.doSync()" style="cursor:pointer;display:flex;align-items:center;gap:6px;color:var(--text3);font-size:11.5px;font-weight:600;">↓ 下拉同步</div>`;
+  const spinner = `<div style="width:15px;height:15px;border:2px solid var(--track);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;"></div>`;
+  if (st === 'signing-in') return `<div style="display:flex;align-items:center;gap:8px;color:var(--text2);font-size:12px;font-weight:600;">${spinner}登入中…</div>`;
+  if (st === 'syncing') return `<div style="display:flex;align-items:center;gap:8px;color:var(--text2);font-size:12px;font-weight:600;">${spinner}連接中…</div>`;
+  if (st === 'done') return `<div style="display:flex;align-items:center;gap:6px;color:#4FA84F;font-size:12px;font-weight:700;">✓ 即時同步中</div>`;
+  if (st === 'unauthorized') return `<div style="display:flex;align-items:center;gap:6px;color:#D2654A;font-size:12px;font-weight:700;">⚠ ${esc(Sync.message)}</div>`;
+  if (st === 'fail') return `<div onclick="A.signIn()" style="cursor:pointer;display:flex;align-items:center;gap:6px;color:#D2654A;font-size:12px;font-weight:700;">⚠ ${esc(Sync.message || '同步失敗')}・點擊重試</div>`;
+  return `<div onclick="A.signIn()" style="cursor:pointer;display:flex;align-items:center;gap:6px;color:var(--text3);font-size:11.5px;font-weight:600;">🔗 點擊登入以同步</div>`;
 }
 
 function renderPrediction() {
@@ -507,11 +510,44 @@ function babyAgeLabel() {
   if (mo < 0) return '即將出生';
   return mo < 1 ? Math.round(mo * 30.4) + ' 天大' : Math.floor(mo) + ' 個月大';
 }
+
+const GOOGLE_G_ICON = `<svg width="18" height="18" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>`;
+
+function renderAuthCard() {
+  const u = Sync.user;
+  if (u) {
+    const initial = (u.displayName || u.email || '?')[0].toUpperCase();
+    const photo = u.photoURL
+      ? `<img src="${u.photoURL}" referrerpolicy="no-referrer" style="width:40px;height:40px;border-radius:50%;flex-shrink:0;object-fit:cover;" />`
+      : `<div style="width:40px;height:40px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:17px;flex-shrink:0;">${initial}</div>`;
+    const statusLabel = Sync.state === 'done' ? '✓ 即時同步中' : Sync.state === 'syncing' ? '連接中…' : (Sync.message || '—');
+    return `
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
+        ${photo}
+        <div style="flex:1;min-width:0;">
+          <p style="font-size:14px;font-weight:700;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(u.displayName || '使用者')}</p>
+          <p style="font-size:12px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px;">${esc(u.email)}</p>
+        </div>
+        <button onclick="A.signOut()" style="flex-shrink:0;font-size:12px;color:#E5573D;background:none;border:1.5px solid #E5573D;border-radius:10px;padding:6px 12px;">登出</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;background:var(--card2);border-radius:12px;padding:10px 12px;">
+        <div style="width:8px;height:8px;border-radius:50%;background:${Sync.state === 'done' ? '#5CB85C' : '#C8965A'};flex-shrink:0;"></div>
+        <p style="font-size:12px;color:var(--text2);">${esc(statusLabel)}</p>
+      </div>`;
+  }
+  const warn = Sync.state === 'unauthorized'
+    ? `<div style="display:flex;gap:6px;align-items:flex-start;margin-bottom:12px;background:var(--card2);border-radius:12px;padding:10px 12px;"><span style="font-size:13px;">⚠️</span><p style="font-size:11px;color:#D2654A;line-height:1.5;">${esc(Sync.message)}，請改用授權過的 Google 帳號登入。</p></div>`
+    : '';
+  return `${warn}
+    <button onclick="A.signIn()" style="width:100%;padding:13px;border:1.5px solid var(--inpBorder);border-radius:14px;background:var(--inpBg);display:flex;align-items:center;justify-content:center;gap:10px;font-size:14px;font-weight:700;color:var(--text);">
+      ${GOOGLE_G_ICON}使用 Google 帳號登入
+    </button>
+    <p style="font-size:11px;color:var(--text3);text-align:center;margin-top:10px;line-height:1.5;">登入後資料即時同步到所有裝置，僅限授權過的家庭成員帳號。</p>`;
+}
 function renderSettings(state) {
   const s = Store.data.settings;
   const sexBtn = (val, label) => `<button onclick="A.setBabySex('${val}')" style="flex:1;padding:9px;border-radius:10px;border:none;font-size:13px;font-weight:${s.babySex === val ? 700 : 600};cursor:pointer;background:${s.babySex === val ? 'var(--card)' : 'transparent'};color:${s.babySex === val ? 'var(--text)' : 'var(--text2)'};box-shadow:${s.babySex === val ? '0 1px 5px var(--shadow)' : 'none'};">${label}</button>`;
   const themeOpt = (val, label) => `<button onclick="A.setTheme('${val}')" style="flex:1;padding:9px 0;border:none;border-radius:11px;font-size:13px;font-weight:700;font-family:inherit;background:${state.theme === val ? 'var(--card)' : 'transparent'};color:${state.theme === val ? 'var(--text)' : 'var(--text2)'};box-shadow:${state.theme === val ? '0 1px 5px var(--shadow)' : 'none'};">${label}</button>`;
-  const connected = Sync.hasCreds();
 
   return `<div class="ns" style="flex:1;min-height:0;padding-bottom:18px;">
     ${headerBar('設定')}
@@ -569,18 +605,14 @@ function renderSettings(state) {
     <div style="padding:18px 16px 0;">
       ${sectionLabel('同步與帳號')}
       <div class="card" style="padding:16px;">
-        <div style="display:flex;align-items:center;gap:10px;background:var(--card2);border-radius:14px;padding:12px 14px;margin-bottom:14px;">
-          <div style="width:8px;height:8px;border-radius:50%;background:${connected ? '#5CB85C' : '#C8965A'};"></div>
-          <div style="flex:1;"><p style="font-size:13px;font-weight:700;color:${connected ? '#4FA84F' : 'var(--text2)'};">${connected ? '已設定' : '尚未設定'}</p><p style="font-size:11px;color:var(--text2);">上次同步 ${esc(Sync.lastSync() || '—')}</p></div>
-          <button onclick="A.doSync()" style="background:var(--card);border:1.5px solid var(--inpBorder);border-radius:12px;padding:7px 14px;font-size:12px;font-weight:700;color:#4FA84F;">立即同步</button>
-        </div>
-        <p style="font-size:11px;color:var(--text2);font-weight:600;margin-bottom:5px;">GitHub Token</p>
-        <input type="text" value="${esc(Store.local('gh_token') || '')}" onchange="A.setGhToken(this.value)" placeholder="ghp_••••••••••••••••" style="margin-bottom:10px;" />
-        <p style="font-size:11px;color:var(--text2);font-weight:600;margin-bottom:5px;">Repo 位置</p>
-        <input type="text" value="${esc(Store.local('gh_repo') || '')}" onchange="A.setGhRepo(this.value)" placeholder="username/baby-records" />
-        <div style="display:flex;gap:6px;align-items:flex-start;margin-top:12px;background:var(--card2);border-radius:12px;padding:10px 12px;">
-          <span style="font-size:13px;">🔒</span><p style="font-size:11px;color:var(--text2);line-height:1.5;">此憑證只存在本機、不會外傳。僅用於與你自己的 repo 同步。建議使用 fine-grained token，權限僅限該 repo 的 contents 讀寫。</p>
-        </div>
+        ${renderAuthCard()}
+      </div>
+    </div>
+    <div style="padding:18px 16px 0;">
+      ${sectionLabel('資料備份')}
+      <div class="card" style="padding:16px;">
+        <p style="font-size:11px;color:var(--text3);margin-bottom:12px;line-height:1.5;">下載一份完整資料快照（喝奶/排便/尿尿/成長紀錄），存到雲端硬碟或信箱給自己，作為額外保險。</p>
+        <button onclick="A.doBackup()" style="width:100%;background:var(--card2);border:1.5px solid var(--inpBorder);border-radius:16px;padding:13px;font-size:14px;font-weight:700;color:var(--text);">💾 下載備份 JSON</button>
       </div>
     </div>
     <div style="padding:18px 16px 0;">

@@ -1,13 +1,24 @@
 # 資料模型
 
-## 同步資料：`data.json`（GitHub repo 內），鏡射在每支手機的 `localStorage['bt_data']`
+## 同步資料：Firestore（見 [sync.md](sync.md)），鏡射在每支手機的 `localStorage['bt_data']`
+
+`Store.data` 這個本機物件的形狀維持不變（下面這份 JSON 範例仍然準確），差別只在於它現在是
+從 Firestore 的多份文件組裝出來的，而不是單一個 GitHub JSON 檔案：
+
+```
+Firestore 路徑                              對應到 Store.data 的哪裡
+families/default/events/{id}       ──→     data.events 陣列裡的一筆
+families/default/growth/{id}       ──→     data.growth 陣列裡的一筆
+families/default/settings/main     ──→     data.settings（單一物件）
+```
+
+每筆文件的欄位：
 
 ```jsonc
 {
   "events": [
     {
-      "id": "uuid",
-      "babyId": "default",          // 預留多寶寶擴充，本版固定值（未來用）
+      "id": "uuid",                  // 同時也是 Firestore 文件 ID
       "type": "milk | poop | pee",
       "time": "2026-06-30T20:40:00.000Z",  // ISO 8601
       "breastMl": 120,              // 僅 milk
@@ -55,11 +66,16 @@
 
 | key | 說明 |
 |---|---|
-| `bt_caregiver` | 這支手機的「我是…」 |
+| `bt_caregiver` | 這支手機的「我是…」，跟 Google 登入身分是兩件事（見下方說明） |
 | `bt_local_theme` | day / night / auto |
-| `bt_local_gh_token` | GitHub fine-grained token |
-| `bt_local_gh_repo` | `owner/repo` |
 | `bt_local_last_sync` | 上次同步成功時間（顯示用） |
-| `bt_local_last_backup_date` | 今天是否已寫過每日備份（避免重複寫入） |
 
-這些 key 都不會出現在 `data.json` 裡，不會被推上 GitHub。
+這些 key 完全是本機的，不會出現在任何 Firestore 文件裡，不會同步到其他裝置。
+
+### 「我是…」跟 Google 登入帳號是分開的兩件事
+
+- **Google 帳號**（Firebase Authentication）：決定「這支手機能不能存取家庭資料」，是安全機制，
+  一次登入、長期有效。
+- **「我是…」**（`bt_caregiver`）：純粹是顯示用的標籤（例如「媽媽」），用來標記每筆記錄的
+  `by` 欄位，跟登入帳號無關——理論上同一個 Google 帳號的手機，也可以填不同的照顧者名字（例如
+  保母借用某支手機時可以填「保母」）。這個設計沿用自舊版，換掉同步後端沒有改變這個決策。

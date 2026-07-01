@@ -29,11 +29,16 @@
      local file (file://), where browsers block ES module loading. Order matters: each
      file only references the others' globals from inside function bodies (never at
      top-level), so this load order just needs every file present before main.js runs. -->
+<!-- Firebase compat SDK: exposes a global `firebase` namespace, works with plain
+     <script src> tags like everything else here (no bundler/ES modules needed). -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <script src="js/who-data.js"></script>
 <script src="js/predict.js"></script>
 <script src="js/store.js"></script>
 <script src="js/csv.js"></script>
-<script src="js/sync.js"></script>
+<script src="js/firebase-sync.js"></script>
 <script src="js/views.js"></script>
 <script src="js/app.js"></script>
 <script src="js/main.js"></script>

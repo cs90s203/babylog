@@ -71,3 +71,19 @@ function downloadCsv(fromDate, toDate) {
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
+
+// Full raw data dump (events, growth, settings) as JSON. Firestore has no git-style
+// commit history the way the old GitHub-repo backend did, so this manual export is the
+// safety net — save it somewhere (email it to yourself, Google Drive...) every so often.
+function downloadJsonBackup() {
+  const json = JSON.stringify(Store.data, null, 2);
+  const blob = new Blob([json], { type: 'application/json;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `babylog-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}

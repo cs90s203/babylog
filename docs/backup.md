@@ -1,39 +1,43 @@
-# 備份策略
+# 備份策略（Firebase / Firestore）
 
-實作見 `Sync.maybeBackup` / `Sync.pruneBackups` in [js/sync.js](../js/sync.js)。
+> 舊版（GitHub repo 當後端）靠「每日快照 + git commit 歷史」雙重備份，換成 Firestore 後
+> 這兩層都不存在了——Firestore 沒有 git 那種版本歷史，Spark（免費）方案也沒有內建的排程備份
+> /還原功能（那是 Blaze 付費方案 + Cloud Functions 才有的東西）。所以備份策略改成更陽春但
+> 完全免費、使用者自己掌控的方式。
 
-`data.json` 是工作檔，但它**從來不是唯一一份**：
+## 目前的備份方式：手動匯出 JSON
 
-## 第一層：每日快照
+設定頁「資料備份」區塊有一顆「💾 下載備份 JSON」按鈕（見
+[js/csv.js](../js/csv.js) 的 `downloadJsonBackup()`），會把 `Store.data`（events、
+growth、settings 全部）匯出成一個 JSON 檔案下載到手機/電腦。
 
-- 觸發時機：**每天第一次同步成功時**（用本機 `bt_local_last_backup_date` 記錄今天是否已備份過，避免
-  同一天重複寫入）。
-- 命名規則：`backups/data-YYYY-MM-DD.json`，內容是合併後的完整 `data.json`。
-- 寫入前會先檢查當天的備份檔是否已存在（避免覆蓋掉當天稍早、可能不同內容的快照——理論上同一天只會
-  寫一次，這是雙重保險）。
+建議：
+- 三不五時按一次，把檔案存到 Google Drive、雲端硬碟，或直接寄一份到自己信箱。
+- 尤其是在做「大量編輯/刪除」之類的操作前後，手動存一份最安全。
 
-## 保留策略
+這是**使用者主動觸發**的備份，不是自動排程——優點是不用額外的付費方案、不用寫
+Cloud Function；缺點是「有沒有定期做」要靠自己養成習慣，App 不會主動提醒。
 
-- 預設保留**最近 30 天**的每日備份。
-- **每月 1 號的那份**永久保留，不會被清除（長期回溯用）。
-- 超過 30 天且不是 1 號的快照，下次同步時會被自動刪除（`pruneBackups`）。
+## Firestore 本身的保護
 
-## 第二層：GitHub commit 歷史
+- Firestore 的寫入是逐筆文件更新（見 [sync.md](sync.md)），不是整包覆蓋，單一筆誤刪只會影響
+  那一筆文件本身（軟刪除墓碑機制，見 [data-model.md](data-model.md)），不會波及其他紀錄。
+- Firebase 主控台的 **Firestore Database → 資料** 分頁可以直接瀏覽/編輯任一筆文件，如果誤刪
+  了一筆事件，只要備份 JSON 裡還有，可以手動在主控台重新建立那份文件（把 JSON 裡對應的欄位
+  複製貼回去）。
 
-每一次 `PUT /contents/data.json` 本身就是一個 git commit。就算 `backups/` 目錄被誤刪，仍然可以從
-GitHub repo 的 commit 歷史（`git log` 或 GitHub 網頁的 "History" 按鈕）回溯任一次變更、看 diff、或
-revert。
+## 還原步驟（資料出問題時）
 
-## 還原步驟（合併出錯 / 檔案損毀時）
+1. 找一份最近的備份 JSON（設定頁匯出的那個檔案）。
+2. 到 Firebase 主控台 **Firestore Database**，比對備份 JSON 裡的 `events`/`growth`/
+   `settings` 跟目前雲端的資料差在哪。
+3. 針對缺漏或錯誤的文件，用主控台的「新增文件」/「編輯欄位」手動修正（文件 ID 用備份 JSON
+   裡該筆記錄的 `id` 欄位，路徑是 `families/default/events/{id}` 或
+   `families/default/growth/{id}`）。
+4. 修正完，所有裝置的即時監聽器會自動收到更新，不需要額外操作。
 
-1. 到你存資料的 GitHub repo 網頁，開 `backups/` 資料夾，找到要還原的日期（例如 `data-2026-06-15.json`）。
-2. 確認內容正常（可以直接在 GitHub 網頁預覽 JSON）。
-3. 兩種還原方式：
-   - **手動**：把該檔內容複製，貼到 `data.json` 並 commit（GitHub 網頁可以直接編輯 commit）。
-   - **App 內**（若有提供還原 UI）：呼叫 `Sync.restoreFromBackup('2026-06-15')`，會把該快照整份寫回
-     `Store.data` 並存到 localStorage（之後仍需要再跑一次 `Sync.sync()` 才會推回 GitHub 的
-     `data.json`）。
-4. 還原後，請所有裝置都手動下拉同步一次，確保大家拉到的是還原後的版本（避免有裝置帶著損毀前的舊
-   `data.json` 又把它推回去蓋掉還原結果）。
-5. 如果連 `backups/` 都不可信，退回方案二：到 repo 的 commit 歷史找 `data.json` 在出問題之前的版本，
-   用 GitHub 網頁的 "Revert"或直接複製該版本內容覆蓋現在的 `data.json`。
+## 未來可以做但目前沒做的事
+
+- 升級到 Blaze（用量計費，但家庭規模用量幾乎不會超出免費額度）之後，可以用 Cloud
+  Functions 排程，每天自動把 Firestore 資料匯出一份到 Cloud Storage，恢復類似舊版
+  GitHub 方案的自動每日備份。這是未來項目，目前為了維持零花費，先用手動匯出頂著。

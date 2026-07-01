@@ -51,10 +51,9 @@ const App = {
       if (mq.addEventListener) mq.addEventListener('change', handler);
     }
     this.rerender();
-    if (Sync.hasCreds()) Sync.sync();
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible' && Sync.hasCreds()) Sync.sync();
-    });
+    // Firestore's onSnapshot listeners (attached once signed in) stay live on their own —
+    // no polling or pull-to-refresh needed, unlike the old GitHub-Contents-API sync.
+    Sync.init();
   },
 
   rerender() { render(this.state); },
@@ -292,18 +291,12 @@ const App = {
     downloadCsv(this.state.exportFrom, this.state.exportTo);
     this.toast('📅', 'CSV 已下載');
   },
-  setGhToken(v) { Store.local('gh_token', v); this.rerender(); },
-  setGhRepo(v) { Store.local('gh_repo', v); this.rerender(); },
-  doSync() {
-    // Pull-to-refresh can fire from an ordinary scroll/swipe, not just a deliberate
-    // "sync now" tap — don't show a scary red failure banner for the expected case of
-    // "this device just hasn't been set up yet". Guide to settings instead.
-    if (!Sync.hasCreds()) {
-      this.toast('🔗', '請先到設定頁設定 GitHub Token 才能同步');
-      return;
-    }
-    Sync.sync();
+  doBackup() {
+    downloadJsonBackup();
+    this.toast('💾', '備份已下載');
   },
+  signIn() { Sync.signInWithGoogle(); },
+  signOut() { Sync.signOut(); },
 };
 
 window.A = App;

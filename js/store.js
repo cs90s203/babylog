@@ -1,8 +1,15 @@
 // Central state + persistence layer.
 // Sync boundary (see docs/data-model.md):
-//   bt_data        -> synced via GitHub (events, growth, settings) — shared by all devices
+//   bt_data        -> synced via Firestore (events, growth, settings) — shared by all devices
 //   bt_caregiver   -> THIS DEVICE ONLY, marks `by` on new records, never synced
 //   everything else prefixed bt_local_ -> device-only preferences
+//
+// Local mutations call Store._cloudPush(kind, doc) (wired to Sync.pushDoc in
+// firebase-sync.js, a no-op until signed in) to fan out to Firestore. Remote changes
+// come back through Store.mergeRemote()/mergeRemoteSettings(), called from the
+// Firestore onSnapshot listeners — those write straight into Store.data and persist()
+// WITHOUT going through _cloudPush again, so applying a remote change can never loop
+// back into another write.
 
 const DATA_KEY = 'bt_data';
 const CAREGIVER_KEY = 'bt_caregiver';
@@ -36,6 +43,8 @@ const Store = {
   data: null,
   caregiver: '',
   listeners: [],
+  _cloudPush: null, // set by firebase-sync.js: function(kind, doc)
+  _cloudPushSettings: null, // function(settings)
 
   init() {
     try { this.data = JSON.parse(localStorage.getItem(DATA_KEY)) || defaultData(); }
@@ -82,6 +91,7 @@ const Store = {
     }, extra || {});
     this.data.events.push(ev);
     this.persist();
+    if (this._cloudPush) this._cloudPush('events', ev);
     return ev;
   },
   updateEvent(id, patch) {
@@ -89,6 +99,7 @@ const Store = {
     if (i === -1) return;
     this.data.events[i] = Object.assign({}, this.data.events[i], patch, { updatedAt: new Date().toISOString() });
     this.persist();
+    if (this._cloudPush) this._cloudPush('events', this.data.events[i]);
   },
   deleteEvent(id) {
     this.updateEvent(id, { deleted: true });
@@ -103,6 +114,7 @@ const Store = {
     const g = Object.assign({ id: uid(), updatedAt: now, deleted: false }, entry);
     this.data.growth.push(g);
     this.persist();
+    if (this._cloudPush) this._cloudPush('growth', g);
     return g;
   },
   deleteGrowth(id) {
@@ -110,6 +122,7 @@ const Store = {
     if (i === -1) return;
     this.data.growth[i] = Object.assign({}, this.data.growth[i], { deleted: true, updatedAt: new Date().toISOString() });
     this.persist();
+    if (this._cloudPush) this._cloudPush('growth', this.data.growth[i]);
   },
   liveGrowth() {
     return this.data.growth.filter(g => !g.deleted);
@@ -119,9 +132,29 @@ const Store = {
   updateSettings(patch) {
     this.data.settings = Object.assign({}, this.data.settings, patch, { updatedAt: new Date().toISOString() });
     this.persist();
+    if (this._cloudPushSettings) this._cloudPushSettings(this.data.settings);
   },
   updateDuration(type, patch) {
     this.data.settings.duration[type] = Object.assign({}, this.data.settings.duration[type], patch);
     this.updateSettings({ duration: this.data.settings.duration });
+  },
+
+  // ---- remote -> local merge (called from Firestore onSnapshot listeners only;
+  //      never call _cloudPush here, or every device would re-broadcast every
+  //      change it receives right back at Firestore in an infinite loop) ----
+  mergeRemote(kind, doc) {
+    const arr = this.data[kind];
+    const i = arr.findIndex((x) => x.id === doc.id);
+    if (i === -1) { arr.push(doc); this.persist(); return; }
+    if (new Date(doc.updatedAt || 0) >= new Date(arr[i].updatedAt || 0)) {
+      arr[i] = doc;
+      this.persist();
+    }
+  },
+  mergeRemoteSettings(settings) {
+    if ((settings.updatedAt || '') >= (this.data.settings.updatedAt || '')) {
+      this.data.settings = Object.assign({}, this.data.settings, settings);
+      this.persist();
+    }
   },
 };
