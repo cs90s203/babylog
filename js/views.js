@@ -192,7 +192,7 @@ function renderTodayTimeline(state) {
   const windowEvents = Store.liveEvents()
     .filter(e => { const t = new Date(e.time); return t >= winStart && t <= winEnd; })
     .map(e => ({ ...e, h: posOf(new Date(e.time)) }));
-  const pxH = 40, padTop = 14, axisX = 54, half = 19, keepR = 0.8, collapseMin = 3, collapsePx = 46;
+  const pxH = 40, padTop = 14, HOURW = 22, axisX = 70, half = 19, keepR = 0.8, collapseMin = 3, collapsePx = 46;
   const dragEv = state.dragId ? windowEvents.find(e => e.id === state.dragId) : null;
   const baseRecs = dragEv ? windowEvents.filter(e => e.id !== state.dragId) : windowEvents;
   const startH = 0, endH = posOf(winEnd); // fixed window: always 0 .. 27
@@ -212,30 +212,51 @@ function renderTodayTimeline(state) {
   let yy = padTop;
   segs.forEach(sg => { sg.y0 = yy; sg.px = sg.collapsed ? collapsePx : (sg.h1 - sg.h0) * pxH; sg.y1 = sg.y0 + sg.px; yy = sg.y1; });
   const Yof = (h) => { for (const sg of segs) { if (h <= sg.h1 + 1e-9) { const f = (h - sg.h0) / ((sg.h1 - sg.h0) || 1); return sg.y0 + Math.max(0, Math.min(1, f)) * sg.px; } } return yy; };
-  const yToH = (y) => { for (const sg of segs) { if (y <= sg.y1) { const f = (y - sg.y0) / (sg.px || 1); return sg.h0 + Math.max(0, Math.min(1, f)) * (sg.h1 - sg.h0); } } return endH; };
-  _timelineMeta = { yToH, hToY: Yof, axis: { startH, endH }, winStart };
+
+  // Rough per-chip width estimate (no live DOM measurement available — this is all
+  // generated as an HTML string) and the row's roughly-known available width (the app
+  // shell is fixed at max-width:440px, so this doesn't vary much device to device).
+  // Only fall back to the compact/overlapping layout when the full-size chips genuinely
+  // wouldn't fit; otherwise lay them out normally, side by side, full labels. A cluster
+  // whose full-size row still doesn't fit on one line (rare — long milk labels) gets an
+  // extra reserved line of height so it can't visually spill into whatever's below it.
+  const ROW_WIDTH_EST = 230, ROW_LINE_H = 24;
+  const estChipWidth = (r) => r.type === 'milk' ? 115 : 76;
+  const clusterLayout = (cl) => {
+    const fullWidthNeeded = cl.items.reduce((s, r) => s + estChipWidth(r), 0) + (cl.items.length - 1) * 6;
+    const compact = cl.items.length > 1 && fullWidthNeeded > ROW_WIDTH_EST;
+    const lines = compact ? 1 : Math.max(1, Math.ceil(fullWidthNeeded / ROW_WIDTH_EST));
+    return { compact, lines };
+  };
 
   const sorted = [...baseRecs].sort((a, b) => a.h - b.h);
   const clusters = [];
   sorted.forEach(r => { const last = clusters[clusters.length - 1]; if (last && Math.abs(r.h - last.items[0].h) <= 0.18) last.items.push(r); else clusters.push({ items: [r] }); });
-  let lastY = -999;
+  let lastY = -999, lastRowExtra = 0;
   // Clusters within ~66 minutes of each other (2*half+6 px at pxH=40) get pushed further
   // down than their raw Yof(mean) position to keep their dot/label from visually
-  // overlapping the previous cluster's. Hour gridlines and the "now" line don't go
+  // overlapping the previous cluster's. A cluster whose row needs more than one line
+  // (clusterLayout().lines > 1) reserves that extra height for whatever comes after it too
+  // (lastRowExtra), so a wrapped row can't run into the next cluster or, for the last
+  // cluster, into the legend below the track. Hour gridlines and the "now" line don't go
   // through this push — if we used raw Yof() for them, a pushed-down cluster could end up
   // rendered *below* a gridline that's chronologically later than it, which is exactly
   // backwards. yOfAdjusted() (below) carries the same cumulative push-down forward onto
   // anything queried at or after that cluster's time, so gridlines/now-line stay
   // consistent with where the clusters actually ended up.
   clusters.forEach(cl => {
+    const { compact, lines } = clusterLayout(cl);
+    cl.compact = compact;
+    const rowExtra = Math.max(0, lines - 1) * ROW_LINE_H;
     const mean = cl.items.reduce((a, r) => a + r.h, 0) / cl.items.length;
     const natural = Yof(mean);
     let y = natural;
-    if (y < lastY + (2 * half + 6)) y = lastY + (2 * half + 6);
+    const minGap = 2 * half + 6 + lastRowExtra;
+    if (y < lastY + minGap) y = lastY + minGap;
     cl.y = y; cl.time = mean; cl.pushExtra = Math.max(0, y - natural);
-    lastY = y;
+    lastY = y; lastRowExtra = rowExtra;
   });
-  const trackH = Math.max(yy + padTop, lastY + 30);
+  const trackH = Math.max(yy + padTop, lastY + 30 + lastRowExtra);
   // cl.y already carries the *cumulative* push from every earlier cluster (via the lastY
   // chain above) — so the extra offset to apply at a given pos is just the most recent
   // cluster's own (y - naturalY), not a sum of every cluster's individual push.
@@ -244,6 +265,27 @@ function renderTodayTimeline(state) {
     for (const cl of clusters) { if (cl.time <= pos + 1e-9) extra = cl.pushExtra; else break; }
     return Yof(pos) + extra;
   }
+  // Timeline drag needs to convert a pointer's Y back to an hour position that's
+  // consistent with what's actually drawn — i.e. it must go through the same push-down
+  // offset as yOfAdjusted, not the raw (pre-push) Yof. yOfAdjusted has no closed-form
+  // inverse (the offset depends on which cluster's time a position falls after), so invert
+  // it numerically: sample it densely (5-minute resolution) and binary-search + interpolate
+  // between samples. This is what silently caused dragged events to commit the wrong time
+  // whenever an earlier cluster's label had been pushed down (see CHANGELOG v2.3.2).
+  const ySamples = [];
+  for (let p = startH; p < endH; p += 1 / 12) ySamples.push([p, yOfAdjusted(p)]);
+  ySamples.push([endH, yOfAdjusted(endH)]);
+  function yToHAdjusted(y) {
+    if (y <= ySamples[0][1]) return ySamples[0][0];
+    const last = ySamples[ySamples.length - 1];
+    if (y >= last[1]) return last[0];
+    let lo = 0, hi = ySamples.length - 1;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (ySamples[mid][1] <= y) lo = mid; else hi = mid; }
+    const [p0, y0] = ySamples[lo], [p1, y1] = ySamples[hi];
+    const f = (y1 - y0) > 1e-6 ? (y - y0) / (y1 - y0) : 0;
+    return p0 + f * (p1 - p0);
+  }
+  _timelineMeta = { yToH: yToHAdjusted, hToY: yOfAdjusted, axis: { startH, endH, nowPos }, winStart };
 
   let nodes = `<div style="position:absolute;left:${axisX}px;top:${padTop}px;width:2px;height:${trackH - padTop * 2}px;background:var(--track);border-radius:1px;"></div>`;
   // Real wall-clock hour boundaries within the window, computed once regardless of segments
@@ -268,8 +310,14 @@ function renderTodayTimeline(state) {
         const y = yOfAdjusted(m.pos);
         const hh = m.date.getHours();
         const dateBadge = hh === 0 ? ` <span style="opacity:.7;">${m.date.getMonth() + 1}/${m.date.getDate()}</span>` : '';
+        // Hour number lives in its own gutter column at the far left, separate from the
+        // event time labels (which sit closer to the dot) — they used to share the same
+        // column and could visually stack when a pushed-down cluster landed near an hour
+        // line. A short dashed tick bridges the gutter to the axis so the number still
+        // reads as "belonging" to its gridline.
         nodes += `<div style="position:absolute;left:${axisX}px;right:0;top:${y}px;height:1px;background:var(--grid);"></div>
-          <div style="position:absolute;left:0;width:${axisX - 12}px;text-align:right;top:${y - 6}px;font-size:9px;color:var(--text3);font-weight:600;white-space:nowrap;">${pad2(hh)}:00${dateBadge}</div>`;
+          <div style="position:absolute;left:${HOURW + 4}px;width:${axisX - HOURW - 14}px;top:${y}px;height:0;border-top:1px dashed var(--grid);opacity:.6;"></div>
+          <div style="position:absolute;left:0;width:${HOURW}px;text-align:right;top:${y - 6}px;font-size:9.5px;color:var(--text3);font-weight:700;white-space:nowrap;">${pad2(hh)}${dateBadge}</div>`;
       });
     }
   });
@@ -290,21 +338,14 @@ function renderTodayTimeline(state) {
     } else kids += `<span>${compact ? (r.type === 'poop' ? '便' : '尿') : (r.type === 'poop' ? '排便' : '尿尿')}</span>`;
     return `<div onpointerdown="A.startDrag('${r.id}',event.clientX,event.clientY)" title="${hm(new Date(r.time))}" class="chip" data-chip-id="${r.id}" style="background:${tintBg(r)};box-shadow:${active ? '0 6px 16px var(--shadow2)' : '0 1px 3px var(--shadow)'};transform:${active ? 'scale(1.05)' : 'none'};">${kids}</div>`;
   };
-  // Rough per-chip width estimate (no live DOM measurement available — this is all
-  // generated as an HTML string) and the row's roughly-known available width (the app
-  // shell is fixed at max-width:440px, so this doesn't vary much device to device).
-  // Only fall back to the compact/overlapping layout when the full-size chips genuinely
-  // wouldn't fit; otherwise lay them out normally, side by side, full labels.
-  const ROW_WIDTH_EST = 230;
-  const estChipWidth = (r) => r.type === 'milk' ? 115 : 76;
   clusters.forEach((cl, ci) => {
     // Events at (near) the same time cascade with a partial overlap (instead of wrapping
     // to a second line) only when they wouldn't otherwise fit side by side — later events
     // sit on top by default (z-index by position), but whichever chip was last tapped
     // (state.frontChipId, set in App.startDrag) is always brought fully to front so it
-    // stays reachable even when piled up.
-    const fullWidthNeeded = cl.items.reduce((s, r) => s + estChipWidth(r), 0) + (cl.items.length - 1) * 6;
-    const compact = cl.items.length > 1 && fullWidthNeeded > ROW_WIDTH_EST;
+    // stays reachable even when piled up. cl.compact was already decided above (it also
+    // feeds the trackH/spacing math), so reuse it rather than recomputing.
+    const compact = cl.compact;
     const itemsHtml = cl.items.map((r, i) => {
       const z = r.id === state.frontChipId ? 50 : (2 + i);
       const ml = (compact && i > 0) ? -18 : 0;
@@ -314,13 +355,13 @@ function renderTodayTimeline(state) {
       ? `display:flex;align-items:center;`
       : `display:flex;align-items:center;gap:6px;flex-wrap:wrap;`;
     nodes += `<div style="position:absolute;left:${axisX - 4}px;top:${cl.y - 5}px;width:10px;height:10px;border-radius:50%;background:${dotColor(cl.items[0])};border:2px solid var(--card);z-index:2;"></div>
-      <div style="position:absolute;left:0;width:${axisX - 12}px;text-align:right;top:${cl.y - 8}px;font-size:12px;font-weight:800;color:var(--text);z-index:2;">${hm(dateOfPos(cl.time))}</div>
+      <div style="position:absolute;left:${HOURW}px;width:${axisX - HOURW - 8}px;text-align:right;top:${cl.y - 8}px;font-size:12px;font-weight:800;color:var(--text);z-index:2;">${hm(dateOfPos(cl.time))}</div>
       <div style="position:absolute;left:${axisX + 14}px;right:4px;top:${cl.y - half}px;min-height:${2 * half}px;${rowStyle}z-index:2;">${itemsHtml}</div>`;
   });
   if (dragEv) {
-    const y = Yof(dragEv.h);
+    const y = yOfAdjusted(dragEv.h);
     nodes += `<div id="ddot" style="position:absolute;left:${axisX - 5}px;top:${y - 6}px;width:12px;height:12px;border-radius:50%;background:${dotColor(dragEv)};border:2px solid var(--card);z-index:8;"></div>
-      <div id="dtl" style="position:absolute;left:0;width:${axisX - 12}px;text-align:right;top:${y - 8}px;font-size:12px;font-weight:800;color:var(--accent);z-index:8;">${hm(dateOfPos(dragEv.h))}</div>
+      <div id="dtl" style="position:absolute;left:${HOURW}px;width:${axisX - HOURW - 8}px;text-align:right;top:${y - 8}px;font-size:12px;font-weight:800;color:var(--accent);z-index:8;">${hm(dateOfPos(dragEv.h))}</div>
       <div id="drow" style="position:absolute;left:${axisX + 14}px;right:4px;top:${y - half}px;display:flex;align-items:center;gap:6px;z-index:8;">${chip(dragEv, true)}</div>`;
   }
   const legend = [['#FF8C6B', '母乳'], ['#E8A33D', '配方'], ['#C77D52', '混合'], ['#C8965A', '排便'], ['#79C3F0', '尿尿']]
@@ -718,28 +759,55 @@ function renderSettings(state) {
 function alarmLabel(n) { n = n || 0; return n === 0 ? '準時' : (n < 0 ? `提前 ${-n} 分` : `延後 ${n} 分`); }
 
 // ============================= SHEETS =============================
+// Tapping the number itself (h/m here, ml amounts in the milk sheets) swaps it for a
+// numeric <input> in place — see App.startNumEdit/commitNumEdit. Autofocus is handled in
+// render() (see below) since the `autofocus` HTML attribute isn't reliable on innerHTML
+// insertion across browsers.
+function numEditInput(value, width, fontSize) {
+  return `<input id="f-numedit" type="number" inputmode="numeric" value="${esc(value)}" onblur="A.commitNumEdit(this.value)" onkeydown="if(event.key==='Enter'){this.blur();}else if(event.key==='Escape'){A.cancelNumEdit();}" style="width:${width}px;text-align:center;font-weight:800;font-size:${fontSize}px;border:none;background:var(--card);border-radius:8px;color:var(--text);" />`;
+}
 function timeStepper(state) {
   const pad = (n) => String(n).padStart(2, '0');
-  const stepBtn = (label, fn) => `<button onclick="${fn}" style="width:38px;height:38px;border-radius:50%;border:none;background:var(--card);color:var(--text);font-size:20px;font-weight:700;box-shadow:0 2px 6px var(--shadow);font-family:inherit;line-height:1;">${label}</button>`;
-  const unit = (val, suffix, dec, inc) => `<div style="display:flex;align-items:center;gap:12px;">${stepBtn('−', dec)}<div style="min-width:58px;text-align:center;"><span style="font-size:30px;font-weight:800;letter-spacing:-1px;color:var(--text);">${val}</span><span style="font-size:13px;color:var(--text2);margin-left:3px;">${suffix}</span></div>${stepBtn('+', inc)}</div>`;
+  const ne = state.numEdit;
+  // Long-press repeats the step (accelerating) instead of one step per tap — see
+  // App.startHold/stopHold. Release is caught globally (main.js window pointerup) since
+  // this button's own DOM node gets replaced by the rerender each step fires.
+  const stepBtn = (label, fn) => `<button onpointerdown="A.startHold(()=>{${fn}})" style="width:38px;height:38px;border-radius:50%;border:none;background:var(--card);color:var(--text);font-size:20px;font-weight:700;box-shadow:0 2px 6px var(--shadow);font-family:inherit;line-height:1;">${label}</button>`;
+  const unit = (field, val, suffix, dec, inc) => {
+    const editing = ne && ne.field === field;
+    const display = editing
+      ? numEditInput(ne.value, 58, 26)
+      : `<span onclick="A.startNumEdit('${field}')" style="font-size:30px;font-weight:800;letter-spacing:-1px;color:var(--text);cursor:pointer;">${val}</span><span style="font-size:13px;color:var(--text2);margin-left:3px;">${suffix}</span>`;
+    return `<div style="display:flex;align-items:center;gap:12px;">${stepBtn('−', dec)}<div style="min-width:58px;text-align:center;">${display}</div>${stepBtn('+', inc)}</div>`;
+  };
   return `<div style="display:flex;justify-content:center;gap:22px;background:var(--card2);border-radius:18px;padding:16px 0;">
-    ${unit(pad(state.rt.h), '時', "A.setH(-1)", "A.setH(1)")}
-    ${unit(pad(state.rt.m), '分', "A.setM(-5)", "A.setM(5)")}
+    ${unit('h', pad(state.rt.h), '時', "A.setH(-1)", "A.setH(1)")}
+    ${unit('m', pad(state.rt.m), '分', "A.setM(-1)", "A.setM(1)")}
   </div>`;
 }
 
+// ml amount spans double as both a live-drag readout (see App.liveSlider, which patches
+// #f-milk-breast-val/#f-milk-formula-val's textContent directly while the range slider is
+// being dragged) and a tap-to-edit target — so the id must stay on the non-editing <span>.
+function mlValueSpan(state, field) {
+  const id = field === 'milkBreast' ? 'f-milk-breast-val' : 'f-milk-formula-val';
+  const ne = state.numEdit;
+  if (ne && ne.field === field) return numEditInput(ne.value, 70, 15);
+  const val = field === 'milkBreast' ? state.milkBreast : state.milkFormula;
+  return `<span id="${id}" onclick="A.startNumEdit('${field}')" style="font-size:15px;font-weight:800;color:var(--text);cursor:pointer;">${val} ml</span>`;
+}
 function renderMilkSheet(state, reopen) {
   return `<div class="sheet-overlay" onclick="A.closeSheet()">
     <div class="sheet" onclick="event.stopPropagation()" style="${sheetAnim(reopen)}">
-      <div class="sheet-handle"></div>
+      <div class="sheet-handle" onpointerdown="A.startSheetDrag(event.clientY)"></div>
       <h2 style="font-size:23px;font-weight:800;margin-bottom:16px;color:var(--text);">記錄喝奶 🍼</h2>
       <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">時間</p>
       ${timeStepper(state)}
       <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin:16px 0 4px;">奶量（母乳 ＋ 配方，可混合）</p>
       <div style="text-align:center;margin-bottom:6px;"><span id="f-milk-total" style="font-size:54px;font-weight:800;line-height:1;letter-spacing:-2px;color:var(--text);">${state.milkBreast + state.milkFormula}</span><span style="font-size:18px;font-weight:500;color:var(--text2);margin-left:5px;">ml 總計</span></div>
-      <div style="display:flex;justify-content:space-between;align-items:baseline;margin:6px 4px 2px;"><span style="font-size:13px;font-weight:700;color:#FF7A56;">🤱 母乳</span><span id="f-milk-breast-val" style="font-size:15px;font-weight:800;color:var(--text);">${state.milkBreast} ml</span></div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin:6px 4px 2px;"><span style="font-size:13px;font-weight:700;color:#FF7A56;">🤱 母乳</span>${mlValueSpan(state, 'milkBreast')}</div>
       <div style="margin:0 4px 14px;"><input type="range" min="0" max="300" step="5" value="${state.milkBreast}" oninput="A.liveSlider('breast',this.value)" /></div>
-      <div style="display:flex;justify-content:space-between;align-items:baseline;margin:6px 4px 2px;"><span style="font-size:13px;font-weight:700;color:#E8A33D;">🍼 配方</span><span id="f-milk-formula-val" style="font-size:15px;font-weight:800;color:var(--text);">${state.milkFormula} ml</span></div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin:6px 4px 2px;"><span style="font-size:13px;font-weight:700;color:#E8A33D;">🍼 配方</span>${mlValueSpan(state, 'milkFormula')}</div>
       <div style="margin:0 4px 22px;"><input type="range" min="0" max="300" step="5" value="${state.milkFormula}" oninput="A.liveSlider('formula',this.value)" /></div>
       <button onclick="A.confirmRecord()" class="primary-btn">✓ 完成記錄</button>
       <button onclick="A.closeSheet()" class="text-btn">取消</button>
@@ -750,7 +818,7 @@ function renderEditSheet(state, reopen) {
   const label = state.recordType === 'poop' ? '排便 💩' : '尿尿 💧';
   return `<div class="sheet-overlay" onclick="A.closeSheet()">
     <div class="sheet" onclick="event.stopPropagation()" style="${sheetAnim(reopen)}">
-      <div class="sheet-handle"></div>
+      <div class="sheet-handle" onpointerdown="A.startSheetDrag(event.clientY)"></div>
       <h2 style="font-size:23px;font-weight:800;margin-bottom:6px;color:var(--text);">補記${label}</h2>
       <p style="font-size:13px;color:var(--text2);margin-bottom:18px;">調整時間後送出。</p>
       <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">時間</p>
@@ -771,13 +839,13 @@ function renderEditRecSheet(state, reopen) {
     <button onclick="A.editAddOther()" style="width:100%;background:var(--card2);border:1.5px dashed var(--inpBorder);border-radius:14px;padding:12px;font-size:14px;font-weight:700;color:var(--text2);margin-bottom:6px;">${state.recordType === 'poop' ? '＋ 同時加上尿尿 💧' : '＋ 同時加上排便 💩'}</button>` : '';
   const milkBlock = isMilk ? `<p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin:16px 0 4px;">奶量（母乳 ＋ 配方）</p>
     <div style="text-align:center;margin-bottom:6px;"><span id="f-milk-total" style="font-size:48px;font-weight:800;line-height:1;letter-spacing:-2px;color:var(--text);">${state.milkBreast + state.milkFormula}</span><span style="font-size:17px;font-weight:500;color:var(--text2);margin-left:5px;">ml 總計</span></div>
-    <div style="display:flex;justify-content:space-between;align-items:baseline;margin:6px 4px 2px;"><span style="font-size:13px;font-weight:700;color:#FF7A56;">🤱 母乳</span><span id="f-milk-breast-val" style="font-size:15px;font-weight:800;color:var(--text);">${state.milkBreast} ml</span></div>
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin:6px 4px 2px;"><span style="font-size:13px;font-weight:700;color:#FF7A56;">🤱 母乳</span>${mlValueSpan(state, 'milkBreast')}</div>
     <div style="margin:0 4px 12px;"><input type="range" min="0" max="300" step="5" value="${state.milkBreast}" oninput="A.liveSlider('breast',this.value)" /></div>
-    <div style="display:flex;justify-content:space-between;align-items:baseline;margin:6px 4px 2px;"><span style="font-size:13px;font-weight:700;color:#E8A33D;">🍼 配方</span><span id="f-milk-formula-val" style="font-size:15px;font-weight:800;color:var(--text);">${state.milkFormula} ml</span></div>
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin:6px 4px 2px;"><span style="font-size:13px;font-weight:700;color:#E8A33D;">🍼 配方</span>${mlValueSpan(state, 'milkFormula')}</div>
     <div style="margin:0 4px 14px;"><input type="range" min="0" max="300" step="5" value="${state.milkFormula}" oninput="A.liveSlider('formula',this.value)" /></div>` : '';
   return `<div class="sheet-overlay" onclick="A.closeSheet()">
     <div class="sheet" onclick="event.stopPropagation()" style="padding-bottom:30px;${sheetAnim(reopen)}">
-      <div class="sheet-handle"></div>
+      <div class="sheet-handle" onpointerdown="A.startSheetDrag(event.clientY)"></div>
       <h2 style="font-size:23px;font-weight:800;margin-bottom:16px;color:var(--text);">編輯記錄</h2>
       <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">時間</p>
       ${timeStepper(state)}
@@ -793,7 +861,7 @@ function renderEditRecSheet(state, reopen) {
 function renderGrowthSheet(state, reopen) {
   return `<div class="sheet-overlay" onclick="A.closeSheet()">
     <div class="sheet" onclick="event.stopPropagation()" style="${sheetAnim(reopen)}">
-      <div class="sheet-handle"></div>
+      <div class="sheet-handle" onpointerdown="A.startSheetDrag(event.clientY)"></div>
       <h2 style="font-size:23px;font-weight:800;margin-bottom:16px;color:var(--text);">記錄成長 📈</h2>
       <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">日期</p>
       <input type="date" value="${esc(state.gDate)}" onchange="A.set({gDate:this.value})" style="margin-bottom:16px;" />
@@ -911,6 +979,9 @@ function render(state) {
   applyTheme(state);
   const scrollArea = root.querySelector('.ns');
   if (scrollArea) scrollArea.scrollTop = prevScroll;
+  // autofocus isn't reliably honored on elements inserted via innerHTML across browsers
+  const numEditEl = document.getElementById('f-numedit');
+  if (numEditEl) { numEditEl.focus(); numEditEl.select(); }
   if (_timelineMeta) {
     window.A._trackNode = document.getElementById('timeline-track');
     window.A._yToH = _timelineMeta.yToH;

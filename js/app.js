@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.3.1';
+const APP_VERSION = '2.3.2';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -28,6 +28,7 @@ const App = {
     dragId: null,
     frontChipId: null, // which overlapping timeline chip (if any) is currently brought to front
     expandedGaps: [],
+    numEdit: null, // { field, value } while a tap-to-edit number input is open
     toast: null,
     showWelcome: false,
     welcomeName: '',
@@ -45,6 +46,9 @@ const App = {
   _hToY: null,
   _axis: null,
   _winStart: null,
+  _holdTimer: null,
+  _holdInterval: null,
+  _sheetDrag: null,
 
   init() {
     Store.init();
@@ -130,6 +134,75 @@ const App = {
   },
   setH(d) { const rt = this.state.rt; this.set({ rt: { ...rt, h: (rt.h + d + 24) % 24 } }); },
   setM(d) { const rt = this.state.rt; this.set({ rt: { ...rt, m: (rt.m + d + 60) % 60 } }); },
+
+  // Press-and-hold repeat for the +/- time steppers (now ±1 instead of ±5, so this is what
+  // makes large adjustments still fast). fn fires once immediately, then repeats with a
+  // short delay, then accelerates. The button's own DOM node gets replaced by the rerender
+  // each step triggers, so release is caught globally (see main.js window pointerup ->
+  // App.stopHold()) rather than via this button's own onpointerup.
+  startHold(fn) {
+    this.stopHold();
+    fn();
+    this._holdTimer = setTimeout(() => {
+      let n = 0;
+      this._holdInterval = setInterval(() => {
+        fn();
+        n++;
+        if (n === 8) { clearInterval(this._holdInterval); this._holdInterval = setInterval(fn, 60); }
+      }, 160);
+    }, 400);
+  },
+  stopHold() {
+    clearTimeout(this._holdTimer); clearInterval(this._holdInterval);
+    this._holdTimer = null; this._holdInterval = null;
+  },
+
+  // Tap-to-edit: tapping the h/m stepper number or an ml amount swaps it for a numeric
+  // input in place (see numEditInput/timeStepper/mlValueSpan in views.js).
+  startNumEdit(field) {
+    const s = this.state;
+    const cur = field === 'h' ? s.rt.h : field === 'm' ? s.rt.m : field === 'milkBreast' ? s.milkBreast : s.milkFormula;
+    this.set({ numEdit: { field, value: String(cur) } });
+  },
+  cancelNumEdit() { this.set({ numEdit: null }); },
+  commitNumEdit(raw) {
+    const ne = this.state.numEdit;
+    if (!ne) return;
+    let n = parseInt(raw, 10);
+    if (isNaN(n)) { this.set({ numEdit: null }); return; }
+    if (ne.field === 'h') { n = Math.max(0, Math.min(23, n)); this.set({ rt: { ...this.state.rt, h: n }, numEdit: null }); }
+    else if (ne.field === 'm') { n = Math.max(0, Math.min(59, n)); this.set({ rt: { ...this.state.rt, m: n }, numEdit: null }); }
+    else if (ne.field === 'milkBreast') { n = Math.max(0, Math.min(999, n)); this.set({ milkBreast: n, numEdit: null }); }
+    else if (ne.field === 'milkFormula') { n = Math.max(0, Math.min(999, n)); this.set({ milkFormula: n, numEdit: null }); }
+  },
+
+  // Bottom sheet drag-to-dismiss: pointerdown on .sheet-handle starts it, global
+  // pointermove/pointerup (main.js) drive it. Live-transforms the sheet's DOM node
+  // directly (no rerender per pixel — same reasoning as timeline drag/sliders), and only
+  // touches Store/state once, on release, to actually close the sheet.
+  startSheetDrag(clientY) {
+    const sheetEl = document.querySelector('.sheet');
+    if (!sheetEl) return;
+    this._sheetDrag = { startY: clientY, sheetEl, height: sheetEl.getBoundingClientRect().height };
+    sheetEl.style.transition = 'none';
+  },
+  sheetDragMove(clientY) {
+    const d = this._sheetDrag; if (!d) return;
+    const dy = Math.max(0, clientY - d.startY);
+    d.sheetEl.style.transform = `translateY(${dy}px)`;
+  },
+  sheetDragEnd(clientY) {
+    const d = this._sheetDrag; if (!d) return;
+    this._sheetDrag = null;
+    const dy = Math.max(0, clientY - d.startY);
+    d.sheetEl.style.transition = 'transform .22s cubic-bezier(.17,.67,.32,1.1)';
+    if (dy > d.height * 0.28 || dy > 140) {
+      d.sheetEl.style.transform = `translateY(${d.height}px)`;
+      setTimeout(() => this.closeSheet(), 180);
+    } else {
+      d.sheetEl.style.transform = '';
+    }
+  },
   // Milk ml sliders: same class of bug as the old timeline drag (see dragMove) — calling
   // this.set() on every oninput tick triggers a full app re-render per pixel of drag,
   // which fights the browser's own native slider-drag gesture (the DOM node gets replaced
@@ -255,8 +328,11 @@ const App = {
     if (!d.active || !this._trackNode || !this._yToH || !this._winStart) return;
     const rect = this._trackNode.getBoundingClientRect();
     const ax = this._axis || { startH: 0, endH: 27 };
+    // Can't drag an event into the future — clamp at "now", not at the window's right edge
+    // (which extends 3h past now purely to leave layout breathing room).
+    const maxH = ax.nowPos != null ? ax.nowPos : ax.endH;
     let h = this._yToH(clientY - rect.top);
-    h = Math.max(ax.startH, Math.min(ax.endH, h));
+    h = Math.max(ax.startH, Math.min(maxH, h));
     h = Math.round(h * 12) / 12; // snap to 5-minute increments
     d.pendingTime = new Date(this._winStart.getTime() + h * 3600000);
 
