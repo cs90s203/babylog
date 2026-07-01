@@ -219,8 +219,31 @@ function renderTodayTimeline(state) {
   const clusters = [];
   sorted.forEach(r => { const last = clusters[clusters.length - 1]; if (last && Math.abs(r.h - last.items[0].h) <= 0.18) last.items.push(r); else clusters.push({ items: [r] }); });
   let lastY = -999;
-  clusters.forEach(cl => { const mean = cl.items.reduce((a, r) => a + r.h, 0) / cl.items.length; let y = Yof(mean); if (y < lastY + (2 * half + 6)) y = lastY + (2 * half + 6); cl.y = y; cl.time = mean; lastY = y; });
+  // Clusters within ~66 minutes of each other (2*half+6 px at pxH=40) get pushed further
+  // down than their raw Yof(mean) position to keep their dot/label from visually
+  // overlapping the previous cluster's. Hour gridlines and the "now" line don't go
+  // through this push — if we used raw Yof() for them, a pushed-down cluster could end up
+  // rendered *below* a gridline that's chronologically later than it, which is exactly
+  // backwards. yOfAdjusted() (below) carries the same cumulative push-down forward onto
+  // anything queried at or after that cluster's time, so gridlines/now-line stay
+  // consistent with where the clusters actually ended up.
+  clusters.forEach(cl => {
+    const mean = cl.items.reduce((a, r) => a + r.h, 0) / cl.items.length;
+    const natural = Yof(mean);
+    let y = natural;
+    if (y < lastY + (2 * half + 6)) y = lastY + (2 * half + 6);
+    cl.y = y; cl.time = mean; cl.pushExtra = Math.max(0, y - natural);
+    lastY = y;
+  });
   const trackH = Math.max(yy + padTop, lastY + 30);
+  // cl.y already carries the *cumulative* push from every earlier cluster (via the lastY
+  // chain above) — so the extra offset to apply at a given pos is just the most recent
+  // cluster's own (y - naturalY), not a sum of every cluster's individual push.
+  function yOfAdjusted(pos) {
+    let extra = 0;
+    for (const cl of clusters) { if (cl.time <= pos + 1e-9) extra = cl.pushExtra; else break; }
+    return Yof(pos) + extra;
+  }
 
   let nodes = `<div style="position:absolute;left:${axisX}px;top:${padTop}px;width:2px;height:${trackH - padTop * 2}px;background:var(--track);border-radius:1px;"></div>`;
   // Real wall-clock hour boundaries within the window, computed once regardless of segments
@@ -230,13 +253,19 @@ function renderTodayTimeline(state) {
     for (; g <= winEnd; g.setHours(g.getHours() + 1)) hourMarks.push({ pos: posOf(g), date: new Date(g) }); }
   segs.forEach(sg => {
     if (sg.collapsed) {
+      // If the gap crosses midnight, bare HH:MM on both ends can visually read as
+      // "backwards" (e.g. "22:58–20:15" when the first is yesterday) — tag both ends with
+      // a date whenever they don't fall on the same calendar day.
+      const d0 = dateOfPos(sg.h0), d1 = dateOfPos(sg.h1);
+      const sameDay = d0.toDateString() === d1.toDateString();
+      const dtag = (d) => sameDay ? '' : ` ${d.getMonth() + 1}/${d.getDate()}`;
       nodes += `<div onclick="A.toggleGap('${sg.key}')" style="position:absolute;left:6px;right:6px;top:${sg.y0}px;height:${sg.px}px;display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;">
         <div style="flex:1;height:0;border-top:1.5px dashed var(--track);"></div>
-        <span style="font-size:10px;color:var(--text3);font-weight:600;white-space:nowrap;">⋯ ${hm(dateOfPos(sg.h0))}–${hm(dateOfPos(sg.h1))} 無紀錄 ▸</span>
+        <span style="font-size:10px;color:var(--text3);font-weight:600;white-space:nowrap;">⋯ ${hm(d0)}${dtag(d0)}–${hm(d1)}${dtag(d1)} 無紀錄 ▸</span>
         <div style="flex:1;height:0;border-top:1.5px dashed var(--track);"></div></div>`;
     } else {
       hourMarks.filter(m => m.pos >= sg.h0 - 1e-6 && m.pos <= sg.h1 + 1e-6).forEach(m => {
-        const y = Yof(m.pos);
+        const y = yOfAdjusted(m.pos);
         const hh = m.date.getHours();
         const dateBadge = hh === 0 ? ` <span style="opacity:.7;">${m.date.getMonth() + 1}/${m.date.getDate()}</span>` : '';
         nodes += `<div style="position:absolute;left:${axisX}px;right:0;top:${y}px;height:1px;background:var(--grid);"></div>
@@ -244,7 +273,7 @@ function renderTodayTimeline(state) {
       });
     }
   });
-  const ny = Yof(nowPos);
+  const ny = yOfAdjusted(nowPos);
   nodes += `<div style="position:absolute;left:${axisX - 4}px;right:0;top:${ny}px;height:2px;background:var(--accent);z-index:3;"></div>
     <div style="position:absolute;right:4px;top:${ny - 14}px;font-size:9px;font-weight:800;color:var(--accent);background:var(--card2);padding:1px 6px;border-radius:6px;z-index:3;">現在 ${hm(now)}</div>`;
 
@@ -261,20 +290,32 @@ function renderTodayTimeline(state) {
     } else kids += `<span>${compact ? (r.type === 'poop' ? '便' : '尿') : (r.type === 'poop' ? '排便' : '尿尿')}</span>`;
     return `<div onpointerdown="A.startDrag('${r.id}',event.clientX,event.clientY)" title="${hm(new Date(r.time))}" class="chip" data-chip-id="${r.id}" style="background:${tintBg(r)};box-shadow:${active ? '0 6px 16px var(--shadow2)' : '0 1px 3px var(--shadow)'};transform:${active ? 'scale(1.05)' : 'none'};">${kids}</div>`;
   };
+  // Rough per-chip width estimate (no live DOM measurement available — this is all
+  // generated as an HTML string) and the row's roughly-known available width (the app
+  // shell is fixed at max-width:440px, so this doesn't vary much device to device).
+  // Only fall back to the compact/overlapping layout when the full-size chips genuinely
+  // wouldn't fit; otherwise lay them out normally, side by side, full labels.
+  const ROW_WIDTH_EST = 230;
+  const estChipWidth = (r) => r.type === 'milk' ? 115 : 76;
   clusters.forEach((cl, ci) => {
-    // 2+ events at (near) the same time cascade with a partial overlap instead of
-    // wrapping to a second line — later events sit on top by default (z-index by
-    // position), but whichever chip was last tapped (state.frontChipId, set in
-    // App.startDrag) is always brought fully to front so it stays reachable.
-    const compact = cl.items.length > 1;
+    // Events at (near) the same time cascade with a partial overlap (instead of wrapping
+    // to a second line) only when they wouldn't otherwise fit side by side — later events
+    // sit on top by default (z-index by position), but whichever chip was last tapped
+    // (state.frontChipId, set in App.startDrag) is always brought fully to front so it
+    // stays reachable even when piled up.
+    const fullWidthNeeded = cl.items.reduce((s, r) => s + estChipWidth(r), 0) + (cl.items.length - 1) * 6;
+    const compact = cl.items.length > 1 && fullWidthNeeded > ROW_WIDTH_EST;
     const itemsHtml = cl.items.map((r, i) => {
       const z = r.id === state.frontChipId ? 50 : (2 + i);
-      const ml = i === 0 ? 0 : -18;
+      const ml = (compact && i > 0) ? -18 : 0;
       return `<div style="position:relative;z-index:${z};margin-left:${ml}px;">${chip(r, false, compact)}</div>`;
     }).join('');
+    const rowStyle = compact
+      ? `display:flex;align-items:center;`
+      : `display:flex;align-items:center;gap:6px;flex-wrap:wrap;`;
     nodes += `<div style="position:absolute;left:${axisX - 4}px;top:${cl.y - 5}px;width:10px;height:10px;border-radius:50%;background:${dotColor(cl.items[0])};border:2px solid var(--card);z-index:2;"></div>
       <div style="position:absolute;left:0;width:${axisX - 12}px;text-align:right;top:${cl.y - 8}px;font-size:12px;font-weight:800;color:var(--text);z-index:2;">${hm(dateOfPos(cl.time))}</div>
-      <div style="position:absolute;left:${axisX + 14}px;right:4px;top:${cl.y - half}px;min-height:${2 * half}px;display:flex;align-items:center;z-index:2;">${itemsHtml}</div>`;
+      <div style="position:absolute;left:${axisX + 14}px;right:4px;top:${cl.y - half}px;min-height:${2 * half}px;${rowStyle}z-index:2;">${itemsHtml}</div>`;
   });
   if (dragEv) {
     const y = Yof(dragEv.h);
