@@ -57,6 +57,7 @@ const Sync = {
         }
         this.user = user ? { email: user.email, displayName: user.displayName, photoURL: user.photoURL } : null;
         if (user) {
+          this._pushAllLocal();
           this._attachListeners();
           this._set("syncing");
         } else {
@@ -86,6 +87,25 @@ const Sync = {
   },
   signOut() {
     if (fbAuth) fbAuth.signOut();
+  },
+
+  // Push every locally-held record on sign-in, not just future ones. Without this, a
+  // device that already had local data (recorded before this device ever signed in, or
+  // while offline) would never surface that data to Firestore — the listeners below only
+  // pull remote -> local, and Store._cloudPush only fires for *new* mutations going
+  // forward. This is what made two devices "not see the same baby": each kept its own
+  // pre-existing local history stuck on itself. Safe to re-run on every sign-in — it's
+  // just a batch of merge:true writes, and updatedAt-based merge (see store.js) means
+  // repeats are harmless no-ops once everything has converged.
+  _pushAllLocal() {
+    if (!fbDb || !Store.data) return;
+    const batch = fbDb.batch();
+    let n = 0;
+    Store.data.events.forEach((ev) => { batch.set(fbDb.doc(`${FAMILY_PATH}/events/${ev.id}`), ev, { merge: true }); n++; });
+    Store.data.growth.forEach((g) => { batch.set(fbDb.doc(`${FAMILY_PATH}/growth/${g.id}`), g, { merge: true }); n++; });
+    if (Store.data.settings) { batch.set(fbDb.doc(`${FAMILY_PATH}/settings/main`), Store.data.settings, { merge: true }); n++; }
+    if (n === 0) return;
+    batch.commit().catch((err) => console.error("initial catch-up push failed:", err));
   },
 
   // ---- real-time listeners: remote change -> merge into Store.data -> re-render ----
