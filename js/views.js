@@ -176,16 +176,28 @@ function yearlyMonthlyMilkCounts() {
   return out;
 }
 
+// The "今天" timeline is a fixed rolling window (now-24h .. now+3h), not the calendar day.
+// A fixed calendar-day window (00:00-24:00) breaks in two ways: it can't show anything
+// from "yesterday" even one minute past midnight, and its width was previously *also*
+// data-dependent (min event time .. now), making it look tiny with sparse data. Position
+// on the axis is "hours since winStart" (a plain float, can exceed the old 0-24 range) —
+// real Date math handles day rollover for free, so labels just work across midnight.
 function renderTodayTimeline(state) {
   const now = new Date();
-  const nowFrac = fracOf(now);
-  const todayEvents = Store.liveEvents().filter(e => dayKey(new Date(e.time)) === dayKey(now)).map(e => ({ ...e, h: fracOf(new Date(e.time)) }));
+  const winStart = new Date(now.getTime() - 24 * 3600000);
+  const winEnd = new Date(now.getTime() + 3 * 3600000);
+  const posOf = (d) => (d.getTime() - winStart.getTime()) / 3600000;
+  const dateOfPos = (p) => new Date(winStart.getTime() + p * 3600000);
+
+  const windowEvents = Store.liveEvents()
+    .filter(e => { const t = new Date(e.time); return t >= winStart && t <= winEnd; })
+    .map(e => ({ ...e, h: posOf(new Date(e.time)) }));
   const pxH = 40, padTop = 14, axisX = 54, half = 19, keepR = 0.8, collapseMin = 3, collapsePx = 46;
-  const dragEv = state.dragId ? todayEvents.find(e => e.id === state.dragId) : null;
-  const baseRecs = dragEv ? todayEvents.filter(e => e.id !== state.dragId) : todayEvents;
-  const pts = todayEvents.map(e => e.h).concat([nowFrac]);
-  const startH = Math.max(0, Math.floor(Math.min(...pts)) - 1);
-  const endH = Math.min(24, Math.ceil(Math.max(...pts)) + 1);
+  const dragEv = state.dragId ? windowEvents.find(e => e.id === state.dragId) : null;
+  const baseRecs = dragEv ? windowEvents.filter(e => e.id !== state.dragId) : windowEvents;
+  const startH = 0, endH = posOf(winEnd); // fixed window: always 0 .. 27
+  const nowPos = posOf(now); // always 24, but computed for clarity/robustness
+  const pts = windowEvents.map(e => e.h).concat([nowPos]);
 
   let keeps = pts.map(h => [Math.max(startH, h - keepR), Math.min(endH, h + keepR)]).sort((a, b) => a[0] - b[0]);
   const merged = [];
@@ -201,7 +213,7 @@ function renderTodayTimeline(state) {
   segs.forEach(sg => { sg.y0 = yy; sg.px = sg.collapsed ? collapsePx : (sg.h1 - sg.h0) * pxH; sg.y1 = sg.y0 + sg.px; yy = sg.y1; });
   const Yof = (h) => { for (const sg of segs) { if (h <= sg.h1 + 1e-9) { const f = (h - sg.h0) / ((sg.h1 - sg.h0) || 1); return sg.y0 + Math.max(0, Math.min(1, f)) * sg.px; } } return yy; };
   const yToH = (y) => { for (const sg of segs) { if (y <= sg.y1) { const f = (y - sg.y0) / (sg.px || 1); return sg.h0 + Math.max(0, Math.min(1, f)) * (sg.h1 - sg.h0); } } return endH; };
-  _timelineMeta = { yToH, axis: { startH, endH } };
+  _timelineMeta = { yToH, hToY: Yof, axis: { startH, endH }, winStart };
 
   const sorted = [...baseRecs].sort((a, b) => a.h - b.h);
   const clusters = [];
@@ -211,22 +223,28 @@ function renderTodayTimeline(state) {
   const trackH = Math.max(yy + padTop, lastY + 30);
 
   let nodes = `<div style="position:absolute;left:${axisX}px;top:${padTop}px;width:2px;height:${trackH - padTop * 2}px;background:var(--track);border-radius:1px;"></div>`;
+  // Real wall-clock hour boundaries within the window, computed once regardless of segments
+  // (winStart rarely lands exactly on the hour, so "every integer pos" != "every :00 clock time").
+  const hourMarks = [];
+  { const g = new Date(winStart); g.setMinutes(0, 0, 0); if (g < winStart) g.setHours(g.getHours() + 1);
+    for (; g <= winEnd; g.setHours(g.getHours() + 1)) hourMarks.push({ pos: posOf(g), date: new Date(g) }); }
   segs.forEach(sg => {
     if (sg.collapsed) {
       nodes += `<div onclick="A.toggleGap('${sg.key}')" style="position:absolute;left:6px;right:6px;top:${sg.y0}px;height:${sg.px}px;display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;">
         <div style="flex:1;height:0;border-top:1.5px dashed var(--track);"></div>
-        <span style="font-size:10px;color:var(--text3);font-weight:600;white-space:nowrap;">⋯ ${hm(toClock(sg.h0))}–${hm(toClock(sg.h1))} 無紀錄 ▸</span>
+        <span style="font-size:10px;color:var(--text3);font-weight:600;white-space:nowrap;">⋯ ${hm(dateOfPos(sg.h0))}–${hm(dateOfPos(sg.h1))} 無紀錄 ▸</span>
         <div style="flex:1;height:0;border-top:1.5px dashed var(--track);"></div></div>`;
     } else {
-      for (let h = Math.ceil(sg.h0 - 1e-6); h <= sg.h1 + 1e-6; h++) {
-        if (h < sg.h0 - 1e-6 || h > sg.h1 + 1e-6) continue;
-        const y = Yof(h);
+      hourMarks.filter(m => m.pos >= sg.h0 - 1e-6 && m.pos <= sg.h1 + 1e-6).forEach(m => {
+        const y = Yof(m.pos);
+        const hh = m.date.getHours();
+        const dateBadge = hh === 0 ? ` <span style="opacity:.7;">${m.date.getMonth() + 1}/${m.date.getDate()}</span>` : '';
         nodes += `<div style="position:absolute;left:${axisX}px;right:0;top:${y}px;height:1px;background:var(--grid);"></div>
-          <div style="position:absolute;left:0;width:${axisX - 12}px;text-align:right;top:${y - 6}px;font-size:9px;color:var(--text3);font-weight:600;">${(h < 10 ? '0' + h : h)}:00</div>`;
-      }
+          <div style="position:absolute;left:0;width:${axisX - 12}px;text-align:right;top:${y - 6}px;font-size:9px;color:var(--text3);font-weight:600;white-space:nowrap;">${pad2(hh)}:00${dateBadge}</div>`;
+      });
     }
   });
-  const ny = Yof(nowFrac);
+  const ny = Yof(nowPos);
   nodes += `<div style="position:absolute;left:${axisX - 4}px;right:0;top:${ny}px;height:2px;background:var(--accent);z-index:3;"></div>
     <div style="position:absolute;right:4px;top:${ny - 14}px;font-size:9px;font-weight:800;color:var(--accent);background:var(--card2);padding:1px 6px;border-radius:6px;z-index:3;">現在 ${hm(now)}</div>`;
 
@@ -238,18 +256,18 @@ function renderTodayTimeline(state) {
       const tag = mix ? '混合' : (r.formulaMl > 0 ? '配方乳' : '母乳');
       kids += `<span style="color:${milkColorOf(r)};">${amt}</span><span style="font-size:10px;font-weight:700;color:${milkColorOf(r)};">${tag}</span>`;
     } else kids += `<span>${r.type === 'poop' ? '排便' : '尿尿'}</span>`;
-    return `<div onpointerdown="A.startDrag('${r.id}',event.clientX,event.clientY)" title="${hm(new Date(r.time))}" class="chip" style="background:${tintBg(r)};box-shadow:${active ? '0 6px 16px var(--shadow2)' : '0 1px 3px var(--shadow)'};transform:${active ? 'scale(1.05)' : 'none'};">${kids}</div>`;
+    return `<div onpointerdown="A.startDrag('${r.id}',event.clientX,event.clientY)" title="${hm(new Date(r.time))}" class="chip" data-chip-id="${r.id}" style="background:${tintBg(r)};box-shadow:${active ? '0 6px 16px var(--shadow2)' : '0 1px 3px var(--shadow)'};transform:${active ? 'scale(1.05)' : 'none'};">${kids}</div>`;
   };
   clusters.forEach((cl, ci) => {
     nodes += `<div style="position:absolute;left:${axisX - 4}px;top:${cl.y - 5}px;width:10px;height:10px;border-radius:50%;background:${dotColor(cl.items[0])};border:2px solid var(--card);z-index:2;"></div>
-      <div style="position:absolute;left:0;width:${axisX - 12}px;text-align:right;top:${cl.y - 8}px;font-size:12px;font-weight:800;color:var(--text);z-index:2;">${hm(toClock(cl.time))}</div>
+      <div style="position:absolute;left:0;width:${axisX - 12}px;text-align:right;top:${cl.y - 8}px;font-size:12px;font-weight:800;color:var(--text);z-index:2;">${hm(dateOfPos(cl.time))}</div>
       <div style="position:absolute;left:${axisX + 14}px;right:4px;top:${cl.y - half}px;min-height:${2 * half}px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;z-index:2;">${cl.items.map(r => chip(r, false)).join('')}</div>`;
   });
   if (dragEv) {
     const y = Yof(dragEv.h);
-    nodes += `<div style="position:absolute;left:${axisX - 5}px;top:${y - 6}px;width:12px;height:12px;border-radius:50%;background:${dotColor(dragEv)};border:2px solid var(--card);z-index:8;"></div>
-      <div style="position:absolute;left:0;width:${axisX - 12}px;text-align:right;top:${y - 8}px;font-size:12px;font-weight:800;color:var(--accent);z-index:8;">${hm(toClock(dragEv.h))}</div>
-      <div style="position:absolute;left:${axisX + 14}px;right:4px;top:${y - half}px;display:flex;align-items:center;gap:6px;z-index:8;">${chip(dragEv, true)}</div>`;
+    nodes += `<div id="ddot" style="position:absolute;left:${axisX - 5}px;top:${y - 6}px;width:12px;height:12px;border-radius:50%;background:${dotColor(dragEv)};border:2px solid var(--card);z-index:8;"></div>
+      <div id="dtl" style="position:absolute;left:0;width:${axisX - 12}px;text-align:right;top:${y - 8}px;font-size:12px;font-weight:800;color:var(--accent);z-index:8;">${hm(dateOfPos(dragEv.h))}</div>
+      <div id="drow" style="position:absolute;left:${axisX + 14}px;right:4px;top:${y - half}px;display:flex;align-items:center;gap:6px;z-index:8;">${chip(dragEv, true)}</div>`;
   }
   const legend = [['#FF8C6B', '母乳'], ['#E8A33D', '配方'], ['#C77D52', '混合'], ['#C8965A', '排便'], ['#79C3F0', '尿尿']]
     .map(([c, l]) => `<div style="display:flex;align-items:center;gap:4px;"><div style="width:9px;height:9px;border-radius:50%;background:${c};"></div><span style="font-size:11px;color:var(--text2);">${l}</span></div>`).join('');
@@ -260,7 +278,7 @@ function renderTodayTimeline(state) {
     <p style="font-size:10.5px;color:var(--text3);margin-top:8px;text-align:center;">長按事件標籤上下拖曳改時間・點一下開編輯</p>
   </div>`;
 }
-function toClock(frac) { const d = new Date(); d.setHours(Math.floor(frac), Math.round((frac % 1) * 60), 0, 0); return d; }
+function pad2(n) { return String(n).padStart(2, '0'); }
 
 function renderHome(state) {
   const milks = Store.liveEvents().filter(e => e.type === 'milk');
@@ -807,6 +825,11 @@ function renderSheet(state) {
 
 function render(state) {
   _timelineMeta = null;
+  // Every state change replaces #root's whole innerHTML (see module comment below), which
+  // would otherwise reset the visible screen's scroll position to 0 on every single
+  // re-render — jarring mid-scroll, and especially bad during a drag gesture that used to
+  // trigger a render per pointermove. Carry the old scroll position over to the new DOM.
+  const prevScroll = document.querySelector('.ns')?.scrollTop || 0;
   const screenHtml = renderScreen(state);
   const html = `<div class="app">
     ${screenHtml}
@@ -819,10 +842,14 @@ function render(state) {
   const root = document.getElementById('root');
   root.innerHTML = html;
   applyTheme(state);
+  const scrollArea = root.querySelector('.ns');
+  if (scrollArea) scrollArea.scrollTop = prevScroll;
   if (_timelineMeta) {
     window.A._trackNode = document.getElementById('timeline-track');
     window.A._yToH = _timelineMeta.yToH;
+    window.A._hToY = _timelineMeta.hToY;
     window.A._axis = _timelineMeta.axis;
+    window.A._winStart = _timelineMeta.winStart;
   }
   return root.querySelector('#scroll-area');
 }

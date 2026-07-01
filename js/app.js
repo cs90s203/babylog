@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.1.0';
+const APP_VERSION = '2.2.0';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -41,7 +41,9 @@ const App = {
   _dragTimer: null,
   _trackNode: null,
   _yToH: null,
+  _hToY: null,
   _axis: null,
+  _winStart: null,
 
   init() {
     Store.init();
@@ -213,22 +215,29 @@ const App = {
       if (this._drag) { this._drag.active = true; this.set({ dragId: this._drag.id }); }
     }, 240);
   },
+  // While actively dragging, this patches the drag-mode DOM nodes directly (#ddot/#dtl/
+  // #drow, rendered once by views.js when dragId gets set) instead of writing to Store on
+  // every pointermove. Writing to Store used to trigger a full app re-render per pixel of
+  // movement — that's where the old jank, the page jumping to scrollTop 0 mid-drag, and
+  // the event "disappearing" when dragged past a stale/detached track node all came from.
+  // The actual data write now happens exactly once, in dragEnd().
   dragMove(clientX, clientY) {
     const d = this._drag; if (!d) return;
     if (Math.abs(clientX - d.startX) > 4 || Math.abs(clientY - d.startY) > 4) d.moved = true;
-    if (!d.active || !this._trackNode || !this._yToH) return;
+    if (!d.active || !this._trackNode || !this._yToH || !this._winStart) return;
     const rect = this._trackNode.getBoundingClientRect();
-    const ax = this._axis || { startH: 0, endH: 24 };
+    const ax = this._axis || { startH: 0, endH: 27 };
     let h = this._yToH(clientY - rect.top);
     h = Math.max(ax.startH, Math.min(ax.endH, h));
-    h = Math.max(0, Math.min(23.999, h));
-    h = Math.round(h * 12) / 12;
-    const ev = Store.data.events.find(e => e.id === d.id);
-    if (ev) {
-      const base = new Date(ev.time);
-      const nt = new Date(base); nt.setHours(Math.floor(h), Math.round((h % 1) * 60), 0, 0);
-      Store.updateEvent(d.id, { time: nt.toISOString() });
-    }
+    h = Math.round(h * 12) / 12; // snap to 5-minute increments
+    d.pendingTime = new Date(this._winStart.getTime() + h * 3600000);
+
+    const y = this._hToY ? this._hToY(h) : Math.max(0, clientY - rect.top);
+    const dot = document.getElementById('ddot'), tl = document.getElementById('dtl'), row = document.getElementById('drow');
+    const label = String(d.pendingTime.getHours()).padStart(2, '0') + ':' + String(d.pendingTime.getMinutes()).padStart(2, '0');
+    if (dot) dot.style.top = (y - 6) + 'px';
+    if (tl) { tl.style.top = (y - 8) + 'px'; tl.textContent = label; }
+    if (row) row.style.top = (y - 19) + 'px';
   },
   dragEnd() {
     const d = this._drag; this._drag = null;
@@ -239,7 +248,11 @@ const App = {
     // silently drops the click on whatever the user was actually tapping (e.g. every button
     // in the app, including this very welcome screen's "開始記錄" button).
     if (!d) return;
-    if (d.active) { this.set({ dragId: null }); this.toast('🕑', '時間已更新'); }
+    if (d.active) {
+      if (d.pendingTime) Store.updateEvent(d.id, { time: d.pendingTime.toISOString() });
+      this.set({ dragId: null });
+      this.toast('🕑', '時間已更新');
+    }
     else if (!d.moved) {
       this.set({ dragId: null });
       const rec = Store.data.events.find(e => e.id === d.id);
