@@ -637,6 +637,10 @@ function renderSettings(state) {
         </div>
       </div>
     </div>
+
+    <div style="text-align:center;padding:24px 0 8px;color:var(--text3);font-size:11px;letter-spacing:.05em;">
+      v${APP_VERSION}
+    </div>
   </div>`;
 }
 function alarmLabel(n) { n = n || 0; return n === 0 ? '準時' : (n < 0 ? `提前 ${-n} 分` : `延後 ${n} 分`); }
