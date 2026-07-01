@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.2.2';
+const APP_VERSION = '2.3.0';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -26,6 +26,7 @@ const App = {
     editBy: '',
     confirmDelId: null,
     dragId: null,
+    frontChipId: null, // which overlapping timeline chip (if any) is currently brought to front
     expandedGaps: [],
     toast: null,
     showWelcome: false,
@@ -129,8 +130,31 @@ const App = {
   },
   setH(d) { const rt = this.state.rt; this.set({ rt: { ...rt, h: (rt.h + d + 24) % 24 } }); },
   setM(d) { const rt = this.state.rt; this.set({ rt: { ...rt, m: (rt.m + d + 60) % 60 } }); },
-  setBreast(v) { this.set({ milkBreast: parseInt(v, 10) || 0 }); },
-  setFormula(v) { this.set({ milkFormula: parseInt(v, 10) || 0 }); },
+  // Milk ml sliders: same class of bug as the old timeline drag (see dragMove) — calling
+  // this.set() on every oninput tick triggers a full app re-render per pixel of drag,
+  // which fights the browser's own native slider-drag gesture (the DOM node gets replaced
+  // mid-gesture) and made it "hard to track/hard to zero out". Write straight into
+  // App.state (no rerender) and patch the couple of dependent text spans directly; the
+  // state is fully correct by the time the sheet is closed/saved, no separate commit step
+  // needed since nothing here is pushed anywhere until confirmRecord()/saveEdit() run.
+  liveSlider(kind, v) {
+    v = parseInt(v, 10) || 0;
+    if (kind === 'breast') this.state.milkBreast = v; else this.state.milkFormula = v;
+    const total = this.state.milkBreast + this.state.milkFormula;
+    const totalEl = document.getElementById('f-milk-total');
+    const breastEl = document.getElementById('f-milk-breast-val');
+    const formulaEl = document.getElementById('f-milk-formula-val');
+    if (totalEl) totalEl.textContent = total;
+    if (breastEl) breastEl.textContent = this.state.milkBreast + ' ml';
+    if (formulaEl) formulaEl.textContent = this.state.milkFormula + ' ml';
+  },
+  // Default-ml sliders in settings: same live-patch treatment, but these DO need a real
+  // commit (Store.updateSettings, which also pushes to Firestore) — just only once, on
+  // release (onchange), not once per pixel of drag.
+  liveDefSlider(kind, v) {
+    const el = document.getElementById(kind === 'breast' ? 'f-def-breast-val' : 'f-def-formula-val');
+    if (el) el.textContent = (parseInt(v, 10) || 0) + ' ml';
+  },
 
   confirmRecord() {
     const s = this.state;
@@ -210,6 +234,10 @@ const App = {
   // drag-to-reposition a timeline chip
   startDrag(id, clientX, clientY) {
     this._drag = { id, startX: clientX, startY: clientY, moved: false, active: false };
+    // Bring the pressed chip to the front of its overlapping stack (see views.js —
+    // clustered chips cascade with a partial overlap) so it's fully visible/tappable
+    // instead of staying partly hidden behind whichever chip happened to render on top.
+    if (this.state.frontChipId !== id) this.set({ frontChipId: id });
     clearTimeout(this._dragTimer);
     this._dragTimer = setTimeout(() => {
       if (this._drag) { this._drag.active = true; this.set({ dragId: this._drag.id }); }

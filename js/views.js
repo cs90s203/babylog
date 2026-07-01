@@ -248,20 +248,33 @@ function renderTodayTimeline(state) {
   nodes += `<div style="position:absolute;left:${axisX - 4}px;right:0;top:${ny}px;height:2px;background:var(--accent);z-index:3;"></div>
     <div style="position:absolute;right:4px;top:${ny - 14}px;font-size:9px;font-weight:800;color:var(--accent);background:var(--card2);padding:1px 6px;border-radius:6px;z-index:3;">現在 ${hm(now)}</div>`;
 
-  const chip = (r, active) => {
+  // compact=true abbreviates the label to just emoji+one-character (排便→便, 尿尿→尿) —
+  // used when a chip is part of an overlapping stack (see below) and doesn't have room to
+  // show its full label without the pile becoming unreadable.
+  const chip = (r, active, compact) => {
     let kids = `<span style="font-size:15px;">${emojiOf(r.type)}</span>`;
     if (r.type === 'milk') {
       const mix = r.breastMl > 0 && r.formulaMl > 0;
       const amt = mix ? (r.breastMl + '+' + r.formulaMl + 'ml') : ((r.formulaMl > 0 ? r.formulaMl : r.breastMl) + 'ml');
-      const tag = mix ? '混合' : (r.formulaMl > 0 ? '配方乳' : '母乳');
-      kids += `<span style="color:${milkColorOf(r)};">${amt}</span><span style="font-size:10px;font-weight:700;color:${milkColorOf(r)};">${tag}</span>`;
-    } else kids += `<span>${r.type === 'poop' ? '排便' : '尿尿'}</span>`;
+      kids += `<span style="color:${milkColorOf(r)};">${amt}</span>`;
+      if (!compact) { const tag = mix ? '混合' : (r.formulaMl > 0 ? '配方乳' : '母乳'); kids += `<span style="font-size:10px;font-weight:700;color:${milkColorOf(r)};">${tag}</span>`; }
+    } else kids += `<span>${compact ? (r.type === 'poop' ? '便' : '尿') : (r.type === 'poop' ? '排便' : '尿尿')}</span>`;
     return `<div onpointerdown="A.startDrag('${r.id}',event.clientX,event.clientY)" title="${hm(new Date(r.time))}" class="chip" data-chip-id="${r.id}" style="background:${tintBg(r)};box-shadow:${active ? '0 6px 16px var(--shadow2)' : '0 1px 3px var(--shadow)'};transform:${active ? 'scale(1.05)' : 'none'};">${kids}</div>`;
   };
   clusters.forEach((cl, ci) => {
+    // 2+ events at (near) the same time cascade with a partial overlap instead of
+    // wrapping to a second line — later events sit on top by default (z-index by
+    // position), but whichever chip was last tapped (state.frontChipId, set in
+    // App.startDrag) is always brought fully to front so it stays reachable.
+    const compact = cl.items.length > 1;
+    const itemsHtml = cl.items.map((r, i) => {
+      const z = r.id === state.frontChipId ? 50 : (2 + i);
+      const ml = i === 0 ? 0 : -18;
+      return `<div style="position:relative;z-index:${z};margin-left:${ml}px;">${chip(r, false, compact)}</div>`;
+    }).join('');
     nodes += `<div style="position:absolute;left:${axisX - 4}px;top:${cl.y - 5}px;width:10px;height:10px;border-radius:50%;background:${dotColor(cl.items[0])};border:2px solid var(--card);z-index:2;"></div>
       <div style="position:absolute;left:0;width:${axisX - 12}px;text-align:right;top:${cl.y - 8}px;font-size:12px;font-weight:800;color:var(--text);z-index:2;">${hm(dateOfPos(cl.time))}</div>
-      <div style="position:absolute;left:${axisX + 14}px;right:4px;top:${cl.y - half}px;min-height:${2 * half}px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;z-index:2;">${cl.items.map(r => chip(r, false)).join('')}</div>`;
+      <div style="position:absolute;left:${axisX + 14}px;right:4px;top:${cl.y - half}px;min-height:${2 * half}px;display:flex;align-items:center;z-index:2;">${itemsHtml}</div>`;
   });
   if (dragEv) {
     const y = Yof(dragEv.h);
@@ -636,10 +649,10 @@ function renderSettings(state) {
       ${sectionLabel('預設奶量')}
       <div class="card" style="padding:16px;">
         <p style="font-size:11px;color:var(--text3);margin-bottom:12px;line-height:1.5;">開「喝奶」時自動帶入的預設量。</p>
-        <div style="display:flex;justify-content:space-between;align-items:baseline;margin:0 2px 2px;"><span style="font-size:13px;font-weight:700;color:#FF7A56;">🤱 母乳</span><span style="font-size:14px;font-weight:800;color:var(--text);">${s.defaultMilk.breast} ml</span></div>
-        <div style="margin:0 2px 12px;"><input type="range" min="0" max="300" step="5" value="${s.defaultMilk.breast}" oninput="A.setDefMilk('breast',this.value)" /></div>
-        <div style="display:flex;justify-content:space-between;align-items:baseline;margin:0 2px 2px;"><span style="font-size:13px;font-weight:700;color:#E8A33D;">🍼 配方</span><span style="font-size:14px;font-weight:800;color:var(--text);">${s.defaultMilk.formula} ml</span></div>
-        <div style="margin:0 2px;"><input type="range" min="0" max="300" step="5" value="${s.defaultMilk.formula}" oninput="A.setDefMilk('formula',this.value)" /></div>
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin:0 2px 2px;"><span style="font-size:13px;font-weight:700;color:#FF7A56;">🤱 母乳</span><span id="f-def-breast-val" style="font-size:14px;font-weight:800;color:var(--text);">${s.defaultMilk.breast} ml</span></div>
+        <div style="margin:0 2px 12px;"><input type="range" min="0" max="300" step="5" value="${s.defaultMilk.breast}" oninput="A.liveDefSlider('breast',this.value)" onchange="A.setDefMilk('breast',this.value)" /></div>
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin:0 2px 2px;"><span style="font-size:13px;font-weight:700;color:#E8A33D;">🍼 配方</span><span id="f-def-formula-val" style="font-size:14px;font-weight:800;color:var(--text);">${s.defaultMilk.formula} ml</span></div>
+        <div style="margin:0 2px;"><input type="range" min="0" max="300" step="5" value="${s.defaultMilk.formula}" oninput="A.liveDefSlider('formula',this.value)" onchange="A.setDefMilk('formula',this.value)" /></div>
       </div>
     </div>
     <div style="padding:18px 16px 24px;">
@@ -682,11 +695,11 @@ function renderMilkSheet(state, reopen) {
       <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">時間</p>
       ${timeStepper(state)}
       <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin:16px 0 4px;">奶量（母乳 ＋ 配方，可混合）</p>
-      <div style="text-align:center;margin-bottom:6px;"><span style="font-size:54px;font-weight:800;line-height:1;letter-spacing:-2px;color:var(--text);">${state.milkBreast + state.milkFormula}</span><span style="font-size:18px;font-weight:500;color:var(--text2);margin-left:5px;">ml 總計</span></div>
-      <div style="display:flex;justify-content:space-between;align-items:baseline;margin:6px 4px 2px;"><span style="font-size:13px;font-weight:700;color:#FF7A56;">🤱 母乳</span><span style="font-size:15px;font-weight:800;color:var(--text);">${state.milkBreast} ml</span></div>
-      <div style="margin:0 4px 14px;"><input type="range" min="0" max="300" step="5" value="${state.milkBreast}" oninput="A.setBreast(this.value)" /></div>
-      <div style="display:flex;justify-content:space-between;align-items:baseline;margin:6px 4px 2px;"><span style="font-size:13px;font-weight:700;color:#E8A33D;">🍼 配方</span><span style="font-size:15px;font-weight:800;color:var(--text);">${state.milkFormula} ml</span></div>
-      <div style="margin:0 4px 22px;"><input type="range" min="0" max="300" step="5" value="${state.milkFormula}" oninput="A.setFormula(this.value)" /></div>
+      <div style="text-align:center;margin-bottom:6px;"><span id="f-milk-total" style="font-size:54px;font-weight:800;line-height:1;letter-spacing:-2px;color:var(--text);">${state.milkBreast + state.milkFormula}</span><span style="font-size:18px;font-weight:500;color:var(--text2);margin-left:5px;">ml 總計</span></div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin:6px 4px 2px;"><span style="font-size:13px;font-weight:700;color:#FF7A56;">🤱 母乳</span><span id="f-milk-breast-val" style="font-size:15px;font-weight:800;color:var(--text);">${state.milkBreast} ml</span></div>
+      <div style="margin:0 4px 14px;"><input type="range" min="0" max="300" step="5" value="${state.milkBreast}" oninput="A.liveSlider('breast',this.value)" /></div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin:6px 4px 2px;"><span style="font-size:13px;font-weight:700;color:#E8A33D;">🍼 配方</span><span id="f-milk-formula-val" style="font-size:15px;font-weight:800;color:var(--text);">${state.milkFormula} ml</span></div>
+      <div style="margin:0 4px 22px;"><input type="range" min="0" max="300" step="5" value="${state.milkFormula}" oninput="A.liveSlider('formula',this.value)" /></div>
       <button onclick="A.confirmRecord()" class="primary-btn">✓ 完成記錄</button>
       <button onclick="A.closeSheet()" class="text-btn">取消</button>
     </div>
@@ -716,11 +729,11 @@ function renderEditRecSheet(state, reopen) {
     </div>
     <button onclick="A.editAddOther()" style="width:100%;background:var(--card2);border:1.5px dashed var(--inpBorder);border-radius:14px;padding:12px;font-size:14px;font-weight:700;color:var(--text2);margin-bottom:6px;">${state.recordType === 'poop' ? '＋ 同時加上尿尿 💧' : '＋ 同時加上排便 💩'}</button>` : '';
   const milkBlock = isMilk ? `<p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin:16px 0 4px;">奶量（母乳 ＋ 配方）</p>
-    <div style="text-align:center;margin-bottom:6px;"><span style="font-size:48px;font-weight:800;line-height:1;letter-spacing:-2px;color:var(--text);">${state.milkBreast + state.milkFormula}</span><span style="font-size:17px;font-weight:500;color:var(--text2);margin-left:5px;">ml 總計</span></div>
-    <div style="display:flex;justify-content:space-between;align-items:baseline;margin:6px 4px 2px;"><span style="font-size:13px;font-weight:700;color:#FF7A56;">🤱 母乳</span><span style="font-size:15px;font-weight:800;color:var(--text);">${state.milkBreast} ml</span></div>
-    <div style="margin:0 4px 12px;"><input type="range" min="0" max="300" step="5" value="${state.milkBreast}" oninput="A.setBreast(this.value)" /></div>
-    <div style="display:flex;justify-content:space-between;align-items:baseline;margin:6px 4px 2px;"><span style="font-size:13px;font-weight:700;color:#E8A33D;">🍼 配方</span><span style="font-size:15px;font-weight:800;color:var(--text);">${state.milkFormula} ml</span></div>
-    <div style="margin:0 4px 14px;"><input type="range" min="0" max="300" step="5" value="${state.milkFormula}" oninput="A.setFormula(this.value)" /></div>` : '';
+    <div style="text-align:center;margin-bottom:6px;"><span id="f-milk-total" style="font-size:48px;font-weight:800;line-height:1;letter-spacing:-2px;color:var(--text);">${state.milkBreast + state.milkFormula}</span><span style="font-size:17px;font-weight:500;color:var(--text2);margin-left:5px;">ml 總計</span></div>
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin:6px 4px 2px;"><span style="font-size:13px;font-weight:700;color:#FF7A56;">🤱 母乳</span><span id="f-milk-breast-val" style="font-size:15px;font-weight:800;color:var(--text);">${state.milkBreast} ml</span></div>
+    <div style="margin:0 4px 12px;"><input type="range" min="0" max="300" step="5" value="${state.milkBreast}" oninput="A.liveSlider('breast',this.value)" /></div>
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin:6px 4px 2px;"><span style="font-size:13px;font-weight:700;color:#E8A33D;">🍼 配方</span><span id="f-milk-formula-val" style="font-size:15px;font-weight:800;color:var(--text);">${state.milkFormula} ml</span></div>
+    <div style="margin:0 4px 14px;"><input type="range" min="0" max="300" step="5" value="${state.milkFormula}" oninput="A.liveSlider('formula',this.value)" /></div>` : '';
   return `<div class="sheet-overlay" onclick="A.closeSheet()">
     <div class="sheet" onclick="event.stopPropagation()" style="padding-bottom:30px;${sheetAnim(reopen)}">
       <div class="sheet-handle"></div>
