@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.3.2';
+const APP_VERSION = '2.3.3';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -176,14 +176,18 @@ const App = {
     else if (ne.field === 'milkFormula') { n = Math.max(0, Math.min(999, n)); this.set({ milkFormula: n, numEdit: null }); }
   },
 
-  // Bottom sheet drag-to-dismiss: pointerdown on .sheet-handle starts it, global
+  // Bottom sheet drag-to-dismiss: pointerdown anywhere on the sheet card starts it (not
+  // just the handle) — but only when it doesn't land on something that's supposed to
+  // handle its own pointer/click (buttons, inputs, range sliders, the numeric tap-to-edit
+  // field...), otherwise this would swallow every tap and drag on those controls. Global
   // pointermove/pointerup (main.js) drive it. Live-transforms the sheet's DOM node
   // directly (no rerender per pixel — same reasoning as timeline drag/sliders), and only
   // touches Store/state once, on release, to actually close the sheet.
-  startSheetDrag(clientY) {
-    const sheetEl = document.querySelector('.sheet');
+  startSheetDrag(e) {
+    if (e.target.closest('button, input, a, select, textarea, [contenteditable]')) return;
+    const sheetEl = e.currentTarget;
     if (!sheetEl) return;
-    this._sheetDrag = { startY: clientY, sheetEl, height: sheetEl.getBoundingClientRect().height };
+    this._sheetDrag = { startY: e.clientY, sheetEl, height: sheetEl.getBoundingClientRect().height };
     sheetEl.style.transition = 'none';
   },
   sheetDragMove(clientY) {

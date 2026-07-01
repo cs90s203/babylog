@@ -256,7 +256,6 @@ function renderTodayTimeline(state) {
     cl.y = y; cl.time = mean; cl.pushExtra = Math.max(0, y - natural);
     lastY = y; lastRowExtra = rowExtra;
   });
-  const trackH = Math.max(yy + padTop, lastY + 30 + lastRowExtra);
   // cl.y already carries the *cumulative* push from every earlier cluster (via the lastY
   // chain above) — so the extra offset to apply at a given pos is just the most recent
   // cluster's own (y - naturalY), not a sum of every cluster's individual push.
@@ -265,6 +264,12 @@ function renderTodayTimeline(state) {
     for (const cl of clusters) { if (cl.time <= pos + 1e-9) extra = cl.pushExtra; else break; }
     return Yof(pos) + extra;
   }
+  // Reserve extra room below the "now" line so it (and whatever's just above it) isn't
+  // crammed against the legend row right under the track — those used to sit only a few
+  // px apart when the last event/cluster landed close to "now", making the bottom of the
+  // timeline cramped and fiddly to tap.
+  const NOW_BOTTOM_GAP = 80;
+  const trackH = Math.max(yy + padTop, lastY + 30 + lastRowExtra, yOfAdjusted(nowPos) + NOW_BOTTOM_GAP);
   // Timeline drag needs to convert a pointer's Y back to an hour position that's
   // consistent with what's actually drawn — i.e. it must go through the same push-down
   // offset as yOfAdjusted, not the raw (pre-push) Yof. yOfAdjusted has no closed-form
@@ -798,8 +803,8 @@ function mlValueSpan(state, field) {
 }
 function renderMilkSheet(state, reopen) {
   return `<div class="sheet-overlay" onclick="A.closeSheet()">
-    <div class="sheet" onclick="event.stopPropagation()" style="${sheetAnim(reopen)}">
-      <div class="sheet-handle" onpointerdown="A.startSheetDrag(event.clientY)"></div>
+    <div class="sheet" onclick="event.stopPropagation()" onpointerdown="A.startSheetDrag(event)" style="${sheetAnim(reopen)}">
+      <div class="sheet-handle"></div>
       <h2 style="font-size:23px;font-weight:800;margin-bottom:16px;color:var(--text);">記錄喝奶 🍼</h2>
       <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">時間</p>
       ${timeStepper(state)}
@@ -817,8 +822,8 @@ function renderMilkSheet(state, reopen) {
 function renderEditSheet(state, reopen) {
   const label = state.recordType === 'poop' ? '排便 💩' : '尿尿 💧';
   return `<div class="sheet-overlay" onclick="A.closeSheet()">
-    <div class="sheet" onclick="event.stopPropagation()" style="${sheetAnim(reopen)}">
-      <div class="sheet-handle" onpointerdown="A.startSheetDrag(event.clientY)"></div>
+    <div class="sheet" onclick="event.stopPropagation()" onpointerdown="A.startSheetDrag(event)" style="${sheetAnim(reopen)}">
+      <div class="sheet-handle"></div>
       <h2 style="font-size:23px;font-weight:800;margin-bottom:6px;color:var(--text);">補記${label}</h2>
       <p style="font-size:13px;color:var(--text2);margin-bottom:18px;">調整時間後送出。</p>
       <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">時間</p>
@@ -844,8 +849,8 @@ function renderEditRecSheet(state, reopen) {
     <div style="display:flex;justify-content:space-between;align-items:baseline;margin:6px 4px 2px;"><span style="font-size:13px;font-weight:700;color:#E8A33D;">🍼 配方</span>${mlValueSpan(state, 'milkFormula')}</div>
     <div style="margin:0 4px 14px;"><input type="range" min="0" max="300" step="5" value="${state.milkFormula}" oninput="A.liveSlider('formula',this.value)" /></div>` : '';
   return `<div class="sheet-overlay" onclick="A.closeSheet()">
-    <div class="sheet" onclick="event.stopPropagation()" style="padding-bottom:30px;${sheetAnim(reopen)}">
-      <div class="sheet-handle" onpointerdown="A.startSheetDrag(event.clientY)"></div>
+    <div class="sheet" onclick="event.stopPropagation()" onpointerdown="A.startSheetDrag(event)" style="padding-bottom:30px;${sheetAnim(reopen)}">
+      <div class="sheet-handle"></div>
       <h2 style="font-size:23px;font-weight:800;margin-bottom:16px;color:var(--text);">編輯記錄</h2>
       <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">時間</p>
       ${timeStepper(state)}
@@ -860,8 +865,8 @@ function renderEditRecSheet(state, reopen) {
 }
 function renderGrowthSheet(state, reopen) {
   return `<div class="sheet-overlay" onclick="A.closeSheet()">
-    <div class="sheet" onclick="event.stopPropagation()" style="${sheetAnim(reopen)}">
-      <div class="sheet-handle" onpointerdown="A.startSheetDrag(event.clientY)"></div>
+    <div class="sheet" onclick="event.stopPropagation()" onpointerdown="A.startSheetDrag(event)" style="${sheetAnim(reopen)}">
+      <div class="sheet-handle"></div>
       <h2 style="font-size:23px;font-weight:800;margin-bottom:16px;color:var(--text);">記錄成長 📈</h2>
       <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">日期</p>
       <input type="date" value="${esc(state.gDate)}" onchange="A.set({gDate:this.value})" style="margin-bottom:16px;" />
