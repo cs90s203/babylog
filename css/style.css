@@ -74,6 +74,16 @@ input[type=date], input[type=text] {
                    intrinsic content size — native date inputs are wide enough on mobile
                    that two side-by-side would overflow their card without this */
 }
+input[type=date] {
+  -webkit-appearance: none; appearance: none; /* iOS Safari otherwise renders its own
+    internal layout for date inputs that ignores width:100% entirely and overflows the
+    container — this hands sizing back to our CSS. The native date picker on tap still
+    works fine, this only drops WebKit's default chrome/sizing, which we override with
+    our own border/background/padding anyway. */
+  display: block;
+  max-width: 100%;
+  box-sizing: border-box;
+}
 input[type=date]:focus, input[type=text]:focus { border-color: var(--accent); }
 
 button { cursor: pointer; }
