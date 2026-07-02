@@ -268,7 +268,7 @@ function renderTodayTimeline(state) {
   // crammed against the legend row right under the track — those used to sit only a few
   // px apart when the last event/cluster landed close to "now", making the bottom of the
   // timeline cramped and fiddly to tap.
-  const NOW_BOTTOM_GAP = 80;
+  const NOW_BOTTOM_GAP = 40;
   const trackH = Math.max(yy + padTop, lastY + 30 + lastRowExtra, yOfAdjusted(nowPos) + NOW_BOTTOM_GAP);
   // Timeline drag needs to convert a pointer's Y back to an hour position that's
   // consistent with what's actually drawn — i.e. it must go through the same push-down
@@ -314,7 +314,13 @@ function renderTodayTimeline(state) {
       hourMarks.filter(m => m.pos >= sg.h0 - 1e-6 && m.pos <= sg.h1 + 1e-6).forEach(m => {
         const y = yOfAdjusted(m.pos);
         const hh = m.date.getHours();
-        const dateBadge = hh === 0 ? ` <span style="opacity:.7;">${m.date.getMonth() + 1}/${m.date.getDate()}</span>` : '';
+        // The midnight date badge (e.g. "7/2") sits in its own column to the LEFT of the
+        // hour-number column, right-aligned against it, instead of being appended after
+        // the hour text — appending it inline pushed "00" itself out of alignment with
+        // every other hour number (which are always exactly 2 characters).
+        const dateBadge = hh === 0
+          ? `<div style="position:absolute;left:-28px;width:24px;text-align:right;top:${y - 6}px;font-size:8.5px;color:var(--text3);opacity:.7;white-space:nowrap;">${m.date.getMonth() + 1}/${m.date.getDate()}</div>`
+          : '';
         // Hour number lives in its own gutter column at the far left, separate from the
         // event time labels (which sit closer to the dot) — they used to share the same
         // column and could visually stack when a pushed-down cluster landed near an hour
@@ -322,7 +328,8 @@ function renderTodayTimeline(state) {
         // reads as "belonging" to its gridline.
         nodes += `<div style="position:absolute;left:${axisX}px;right:0;top:${y}px;height:1px;background:var(--grid);"></div>
           <div style="position:absolute;left:${HOURW + 4}px;width:${axisX - HOURW - 14}px;top:${y}px;height:0;border-top:1px dashed var(--grid);opacity:.6;"></div>
-          <div style="position:absolute;left:0;width:${HOURW}px;text-align:right;top:${y - 6}px;font-size:9.5px;color:var(--text3);font-weight:700;white-space:nowrap;">${pad2(hh)}${dateBadge}</div>`;
+          ${dateBadge}
+          <div style="position:absolute;left:0;width:${HOURW}px;text-align:right;top:${y - 6}px;font-size:9.5px;color:var(--text3);font-weight:700;white-space:nowrap;">${pad2(hh)}</div>`;
       });
     }
   });
