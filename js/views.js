@@ -479,7 +479,7 @@ function renderHome(state) {
   const todayLabel = now.toLocaleDateString('zh-TW', { weekday: 'long', month: 'long', day: 'numeric' });
   const babyName = Store.data.settings.babyName || '寶貝';
 
-  return `<div class="ns" id="scroll-area" style="flex:1;min-height:0;padding-bottom:18px;">
+  return `<div class="ns" id="scroll-area" style="flex:1;min-height:0;padding-bottom:48px;">
     <div style="display:flex;justify-content:center;align-items:center;gap:8px;height:38px;">${renderSyncPill()}</div>
     <div style="padding:2px 22px 14px;display:flex;justify-content:space-between;align-items:center;">
       <div>
@@ -708,7 +708,7 @@ function renderGrowthStats(state) {
 
 function renderStats(state) {
   const tabBar = `<div class="seg" style="margin-bottom:14px;">${[['feed', '🍼 餵養'], ['growth', '📈 成長']].map(([k, l]) => `<button class="${state.statsTab === k ? 'active' : ''}" onclick="A.set({statsTab:'${k}'})">${l}</button>`).join('')}</div>`;
-  return `<div class="ns" style="flex:1;min-height:0;padding-bottom:18px;">
+  return `<div class="ns" style="flex:1;min-height:0;padding-bottom:58px;">
     ${headerBar('統計')}
     <div style="padding:8px 16px 0;">${tabBar}${state.statsTab === 'growth' ? renderGrowthStats(state) : renderFeedStats(state)}</div>
   </div>`;
@@ -731,7 +731,7 @@ function renderRecords(state) {
     </div>`;
   };
   const list = evs.length ? `<div class="card" style="overflow:hidden;">${evs.map(row).join('')}</div>` : `<div style="text-align:center;padding:48px 0;color:var(--text3);font-size:13px;">沒有符合的紀錄</div>`;
-  return `<div class="ns" style="flex:1;min-height:0;padding-bottom:18px;">
+  return `<div class="ns" style="flex:1;min-height:0;padding-bottom:78px;">
     ${headerBar('紀錄')}
     <div style="padding:8px 16px 0;">${chips}${list}</div>
   </div>`;
