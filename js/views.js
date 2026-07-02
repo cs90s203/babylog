@@ -262,16 +262,41 @@ function renderTodayTimeline(state) {
     let y = natural;
     const minGap = 2 * half + 6 + lastRowExtra;
     if (y < lastY + minGap) y = lastY + minGap;
-    cl.y = y; cl.time = mean; cl.pushExtra = Math.max(0, y - natural);
+    cl.y = y; cl.time = mean;
     lastY = y; lastRowExtra = rowExtra;
   });
-  // cl.y already carries the *cumulative* push from every earlier cluster (via the lastY
-  // chain above) — so the extra offset to apply at a given pos is just the most recent
-  // cluster's own (y - naturalY), not a sum of every cluster's individual push.
+  // Gridlines/hour marks need a Y mapping that's consistent with where clusters actually
+  // ended up (cl.y, after push-down), but two simpler approaches were both tried and both
+  // broke on busy days with many clusters:
+  //  - using just the nearest cluster's own pushExtra: not monotonic across clusters (a
+  //    tightly-packed cluster can need a big push while the next, naturally further away,
+  //    needs none), so the offset could suddenly drop back near a later cluster and put a
+  //    gridline *above* one computed just before it.
+  //  - anchoring to the nearest earlier cluster and extending forward at Yof's natural
+  //    rate: still broke, because an EARLIER cluster's push can eat into the natural time
+  //    gap leading up to a LATER, unpushed cluster — extrapolating from the earlier one
+  //    overshoots past where the later cluster actually sits.
+  // What's actually guaranteed monotonic is the sequence of cluster anchor points
+  // themselves: cl.y is non-decreasing by construction (each one is pushed to at least
+  // lastY + minGap). So build a piecewise-linear curve straight through those anchor
+  // points — (cl.time, cl.y) for every cluster, plus the window's start/end — and
+  // interpolate hour marks along straight lines between whichever two anchors bracket
+  // them. Connecting an increasing sequence of points with straight segments is
+  // monotonic no matter how uneven the pushes were.
+  const anchors = [{ pos: startH, y: Yof(startH) }];
+  clusters.forEach(cl => anchors.push({ pos: cl.time, y: cl.y }));
+  const lastCl = clusters[clusters.length - 1];
+  const tailOffset = lastCl ? lastCl.y - Yof(lastCl.time) : 0;
+  anchors.push({ pos: endH, y: Yof(endH) + tailOffset });
   function yOfAdjusted(pos) {
-    let extra = 0;
-    for (const cl of clusters) { if (cl.time <= pos + 1e-9) extra = cl.pushExtra; else break; }
-    return Yof(pos) + extra;
+    if (pos <= anchors[0].pos) return anchors[0].y + (pos - anchors[0].pos);
+    const lastA = anchors[anchors.length - 1];
+    if (pos >= lastA.pos) return lastA.y + (pos - lastA.pos);
+    let lo = 0, hi = anchors.length - 1;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (anchors[mid].pos <= pos) lo = mid; else hi = mid; }
+    const a = anchors[lo], b = anchors[hi];
+    const f = (b.pos - a.pos) > 1e-9 ? (pos - a.pos) / (b.pos - a.pos) : 0;
+    return a.y + f * (b.y - a.y);
   }
   // Reserve extra room below the "now" line so it (and whatever's just above it) isn't
   // crammed against the legend row right under the track — those used to sit only a few
