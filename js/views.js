@@ -603,7 +603,7 @@ function renderFeedStats(state) {
       <div style="font-size:10px;font-weight:800;color:var(--text);line-height:1.3;">${cnt}</div>
       <div style="font-size:9px;font-weight:700;color:#C8965A;line-height:1.3;">${dPoop[i]}</div>
       <div style="font-size:9px;font-weight:700;color:#79C3F0;line-height:1.3;">${dPee[i]}</div>
-      <div style="width:100%;margin-top:5px;height:${Math.round(cnt / dMax * 76) + (cnt > 0 ? 6 : 0)}px;background:linear-gradient(180deg,#C8965A,#79C3F0);border-radius:6px;"></div>
+      <div style="width:100%;margin-top:5px;height:${Math.round(cnt / dMax * 76) + (cnt > 0 ? 6 : 0)}px;background:linear-gradient(180deg,#B98CC7,#9B6FB0);border-radius:6px;"></div>
       <div style="font-size:9px;color:var(--text2);font-weight:600;margin-top:6px;">${labels[i]}</div>
     </div>`).join('')}</div>
     <div style="display:flex;gap:14px;margin-top:12px;justify-content:center;">${[['var(--text)', '換尿布次數'], ['#C8965A', '排便'], ['#79C3F0', '尿尿']].map(([c, l]) => `<div style="display:flex;align-items:center;gap:4px;"><div style="width:9px;height:9px;border-radius:50%;background:${c};"></div><span style="font-size:11px;color:var(--text2);">${l}</span></div>`).join('')}</div>`);
