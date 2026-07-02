@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.4.0';
+const APP_VERSION = '2.4.1';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -319,8 +319,17 @@ const App = {
     if (this.state.frontChipId !== id) this.set({ frontChipId: id });
     clearTimeout(this._dragTimer);
     this._dragTimer = setTimeout(() => {
-      if (this._drag) { this._drag.active = true; this.set({ dragId: this._drag.id }); }
-    }, 240);
+      // If the finger already moved noticeably before the hold threshold elapsed, this
+      // was a scroll/swipe passing through the chip, not a deliberate press-and-hold —
+      // don't hijack it into a drag. This, plus the longer hold threshold below, is what
+      // fixed chips being too easy to accidentally grab while scrolling the timeline.
+      if (this._drag && !this._drag.moved) {
+        this._drag.active = true;
+        clearTimeout(this._glowTimer);
+        this.set({ dragId: this._drag.id, justUpdatedId: this._drag.id });
+        this._glowTimer = setTimeout(() => this.set({ justUpdatedId: null }), 900);
+      }
+    }, 740);
   },
   // While actively dragging, this patches the drag-mode DOM nodes directly (#ddot/#dtl/
   // #drow, rendered once by views.js when dragId gets set) instead of writing to Store on
@@ -371,7 +380,10 @@ const App = {
       this.set({ dragId: null });
       const rec = Store.data.events.find(e => e.id === d.id);
       if (rec) this.openEditRec(rec);
-    } else this.set({ dragId: null });
+    }
+    // else: moved but never activated (a scroll/swipe through the chip, cancelled above)
+    // — dragId was never set for it, so there's nothing to clear and no rerender needed.
+    else if (this.state.dragId != null) this.set({ dragId: null });
   },
 
   // ---- growth ----

@@ -39,6 +39,27 @@ function navIcon(name, active) {
 }
 function backIcon() { return `<svg width="9" height="15" viewBox="0 0 9 15" fill="none"><path d="M8 1L1.5 7.5 8 14" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`; }
 
+// The quick-record buttons (milk/poop/pee) fan out above the FAB like paw-print toes
+// above a heel pad — 3 fixed points on an arc, computed with plain trig instead of a
+// canvas/SVG path since there are only ever 3 of them. Positioned relative to the FAB
+// button's own top-center (see the wrapper div in renderNav), radius/spread tuned to sit
+// close above the FAB without colliding with the home/stats/records/config icons on
+// either side.
+function pawButtons() {
+  const R = 40, spreadDeg = 72, size = 34;
+  const items = [
+    { emoji: '🍼', attrs: `onclick="A.openMilk()"` },
+    { emoji: '💩', attrs: `onclick="A.tap('poop')" onpointerdown="A.startPress('poop')" onpointerup="A.endPress()" onpointerleave="A.endPress()"` },
+    { emoji: '💧', attrs: `onclick="A.tap('pee')" onpointerdown="A.startPress('pee')" onpointerup="A.endPress()" onpointerleave="A.endPress()"` },
+  ];
+  const n = items.length;
+  return items.map((it, i) => {
+    const angleDeg = -spreadDeg / 2 + (spreadDeg * i / (n - 1));
+    const rad = angleDeg * Math.PI / 180;
+    const dx = R * Math.sin(rad), dy = -R * Math.cos(rad);
+    return `<button ${it.attrs} style="position:absolute;left:calc(50% + ${dx.toFixed(1)}px - ${size / 2}px);top:${(dy - size / 2).toFixed(1)}px;width:${size}px;height:${size}px;border-radius:50%;border:none;background:var(--card);box-shadow:0 3px 10px var(--shadow);display:flex;align-items:center;justify-content:center;font-size:16px;z-index:5;">${it.emoji}</button>`;
+  }).join('');
+}
 function renderNav(state) {
   const s = state.screen;
   return `
@@ -49,11 +70,14 @@ function renderNav(state) {
     <button onclick="A.goStats()" style="background:none;border:none;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:56px;">
       ${navIcon('stats', s === 'stats')}<span style="font-size:10px;font-weight:700;color:${s === 'stats' ? 'var(--accent)' : 'var(--text3)'};">統計</span>
     </button>
-    <button onclick="A.openGrowth()" style="background:none;border:none;display:flex;flex-direction:column;align-items:center;margin-top:-18px;min-width:60px;">
-      <div style="width:54px;height:54px;border-radius:50%;background:var(--fab);display:flex;align-items:center;justify-content:center;box-shadow:0 4px 18px var(--fabGlow);">
-        <svg width="26" height="26" viewBox="0 0 26 26" fill="none"><line x1="13" y1="5" x2="13" y2="21" stroke="white" stroke-width="2.5" stroke-linecap="round"/><line x1="5" y1="13" x2="21" y2="13" stroke="white" stroke-width="2.5" stroke-linecap="round"/></svg>
-      </div>
-    </button>
+    <div style="position:relative;width:60px;display:flex;flex-direction:column;align-items:center;margin-top:-18px;">
+      <button onclick="A.openGrowth()" style="background:none;border:none;display:flex;flex-direction:column;align-items:center;">
+        <div style="width:54px;height:54px;border-radius:50%;background:var(--fab);display:flex;align-items:center;justify-content:center;box-shadow:0 4px 18px var(--fabGlow);">
+          <svg width="26" height="26" viewBox="0 0 26 26" fill="none"><line x1="13" y1="5" x2="13" y2="21" stroke="white" stroke-width="2.5" stroke-linecap="round"/><line x1="5" y1="13" x2="21" y2="13" stroke="white" stroke-width="2.5" stroke-linecap="round"/></svg>
+        </div>
+      </button>
+      ${pawButtons()}
+    </div>
     <button onclick="A.goRecords()" style="background:none;border:none;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:56px;">
       ${navIcon('records', s === 'records')}<span style="font-size:10px;font-weight:700;color:${s === 'records' ? 'var(--accent)' : 'var(--text3)'};">紀錄</span>
     </button>
@@ -386,8 +410,9 @@ function renderTodayTimeline(state) {
       kids += `<span style="color:${milkColorOf(r)};">${amt}</span>`;
       if (!compact) { const tag = mix ? '混合' : (r.formulaMl > 0 ? '配方乳' : '母乳'); kids += `<span style="font-size:10px;font-weight:700;color:${milkColorOf(r)};">${tag}</span>`; }
     } else kids += `<span>${compact ? (r.type === 'poop' ? '便' : '尿') : (r.type === 'poop' ? '排便' : '尿尿')}</span>`;
-    // Confirms a just-committed drag with a brief glow instead of a toast popup (see
-    // App.dragEnd) — state.justUpdatedId is cleared again ~900ms later.
+    // Brief glow instead of a toast popup — fires both when a press-and-hold activates a
+    // drag (confirms "you've grabbed this one") and when the drag commits (see
+    // App.startDrag/dragEnd). state.justUpdatedId is cleared again ~900ms later.
     const glow = r.id === state.justUpdatedId ? 'animation:chipGlow .9s ease;' : '';
     return `<div onpointerdown="A.startDrag('${r.id}',event.clientX,event.clientY)" title="${hm(new Date(r.time))}" class="chip" data-chip-id="${r.id}" style="background:${tintBg(r)};box-shadow:${active ? '0 6px 16px var(--shadow2)' : '0 1px 3px var(--shadow)'};transform:${active ? 'scale(1.05)' : 'none'};${glow}">${kids}</div>`;
   };
@@ -433,6 +458,10 @@ function renderTodayTimeline(state) {
 }
 function pad2(n) { return String(n).padStart(2, '0'); }
 
+// Trying out moving quick-record (milk/poop/pee) into the paw-shaped buttons above the
+// nav's FAB (see pawButtons/renderNav) instead of these big home-screen buttons — set
+// back to true to bring the original section back.
+const SHOW_HOME_QUICK_RECORD = false;
 function renderHome(state) {
   const milks = Store.liveEvents().filter(e => e.type === 'milk');
   const todayEvents = Store.liveEvents().filter(e => dayKey(new Date(e.time)) === dayKey(new Date()));
@@ -469,7 +498,7 @@ function renderHome(state) {
         <div style="flex:1;text-align:center;"><p style="font-size:21px;font-weight:800;color:#4AAEDF;line-height:1;">${peeCount}</p><p style="font-size:10px;color:var(--text2);font-weight:600;margin-top:2px;">尿尿</p></div>
       </div>
     </div>
-    <div style="padding:4px 16px 14px;">
+    ${SHOW_HOME_QUICK_RECORD ? `<div style="padding:4px 16px 14px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
         <p style="font-size:17px;font-weight:700;color:var(--text);">快速記錄</p>
         <p style="font-size:11px;color:var(--text3);">長按排便/尿尿可補記時間</p>
@@ -485,7 +514,7 @@ function renderHome(state) {
           <div style="font-size:32px;line-height:1;">💧</div><p style="font-size:15px;font-weight:800;color:#24365E;">尿尿</p><p style="font-size:10px;color:rgba(36,54,94,.68);font-weight:600;">${lastTimeLabel('pee')}</p>
         </button>
       </div>
-    </div>
+    </div>` : ''}
     <div style="padding:0 16px 24px;">
       <div style="background:var(--card);border-radius:18px;padding:18px 18px 20px;box-shadow:0 2px 12px var(--shadow);">
         <p style="font-size:15px;font-weight:700;margin-bottom:14px;color:var(--text);">活動時間軸</p>
