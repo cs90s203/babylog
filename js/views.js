@@ -55,12 +55,14 @@ function pawButtons() {
     { emoji: '💩', bg: '#995D81', shadow: 'rgba(153,93,129,.4)', attrs: `onclick="A.tap('poop')" onpointerdown="A.startPress('poop')" onpointerup="A.endPress()" onpointerleave="A.endPress()"` },
     { emoji: '💧', bg: '#9BB1FF', shadow: 'rgba(155,177,255,.5)', attrs: `onclick="A.tap('pee')" onpointerdown="A.startPress('pee')" onpointerup="A.endPress()" onpointerleave="A.endPress()"` },
   ];
-  const n = items.length;
+  const n = items.length, dropPx = 10, sideOutPx = 5;
   return items.map((it, i) => {
     const angleDeg = -spreadDeg / 2 + (spreadDeg * i / (n - 1));
     const rad = angleDeg * Math.PI / 180;
-    const dx = R * Math.sin(rad), dy = -R * Math.cos(rad);
-    return `<button ${it.attrs} style="position:absolute;left:calc(50% + ${dx.toFixed(1)}px - ${size / 2}px);top:${(dy - size / 2).toFixed(1)}px;width:${size}px;height:${size}px;border-radius:50%;border:none;background:${it.bg};opacity:.75;box-shadow:0 3px 10px ${it.shadow};display:flex;align-items:center;justify-content:center;font-size:15px;z-index:5;">${it.emoji}</button>`;
+    let dx = R * Math.sin(rad);
+    const dy = -R * Math.cos(rad) + dropPx;
+    if (dx !== 0) dx += Math.sign(dx) * sideOutPx; // push the left/right buttons further out, middle stays centered
+    return `<button ${it.attrs} style="position:absolute;left:calc(50% + ${dx.toFixed(1)}px - ${size / 2}px);top:${(dy - size / 2).toFixed(1)}px;width:${size}px;height:${size}px;border-radius:50%;border:none;background:${it.bg};box-shadow:0 3px 10px ${it.shadow};display:flex;align-items:center;justify-content:center;font-size:15px;z-index:5;">${it.emoji}</button>`;
   }).join('');
 }
 function renderNav(state) {
