@@ -170,7 +170,10 @@ function renderBarTimeline(scale) {
   </div>`;
 }
 
-function dayKey(d) { return d.toISOString().slice(0, 10); }
+// Local calendar date, NOT toISOString()'s UTC date — using UTC here meant "today" only
+// rolled over at UTC midnight (08:00 in UTC+8), not local midnight, so the home screen's
+// today-only stats stayed stuck on yesterday's numbers for hours after local midnight.
+function dayKey(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
 function weeklyMilkCounts() {
   const now = new Date(); const out = [];
   const dow = (now.getDay() + 6) % 7; // Mon=0
@@ -554,20 +557,29 @@ function renderFeedStats(state) {
   const totalMl = milks.reduce((s, e) => s + (e.amountMl || 0), 0);
   const days = Math.max(1, Math.round((to - from) / 86400000) + 1);
   const avgMl = Math.round(totalMl / days);
-  const diaperCount = evs.filter(e => e.type === 'poop' || e.type === 'pee').length;
+  const poopCount = evs.filter(e => e.type === 'poop').length;
+  const peeCount = evs.filter(e => e.type === 'pee').length;
   const sortedMilks = milks.slice().sort((a, b) => new Date(a.time) - new Date(b.time));
+  // Exclude the overnight stretch from the average — not a fixed clock window (babies'
+  // sleep timing varies night to night), but dynamically: any interval whose two feeds
+  // fall on different calendar days is treated as "the night gap" and skipped. A fixed
+  // interval that includes those long overnight gaps skews the average upward and doesn't
+  // reflect actual daytime feeding rhythm.
   let avgIntervalLabel = '—';
   if (sortedMilks.length >= 2) {
-    let totalMin = 0;
-    for (let i = 1; i < sortedMilks.length; i++) totalMin += (new Date(sortedMilks[i].time) - new Date(sortedMilks[i - 1].time)) / 60000;
-    const avgMin = totalMin / (sortedMilks.length - 1);
-    avgIntervalLabel = `${Math.floor(avgMin / 60)}h${Math.round(avgMin % 60)}m`;
+    let totalMin = 0, n = 0;
+    for (let i = 1; i < sortedMilks.length; i++) {
+      const prev = new Date(sortedMilks[i - 1].time), cur = new Date(sortedMilks[i].time);
+      if (dayKey(prev) !== dayKey(cur)) continue;
+      totalMin += (cur - prev) / 60000; n++;
+    }
+    if (n > 0) { const avgMin = totalMin / n; avgIntervalLabel = `${Math.floor(avgMin / 60)}h${Math.round(avgMin % 60)}m`; }
   }
 
   const rangeTabs = `<div class="seg" style="margin-bottom:14px;">${[['week', '本週'], ['month', '本月'], ['year', '本年']].map(([k, l]) => `<button class="${state.statsRange === k ? 'active' : ''}" onclick="A.set({statsRange:'${k}'})">${l}</button>`).join('')}</div>`;
-  const sStat = (val, lbl) => `<div style="flex:1;text-align:center;"><p style="font-size:19px;font-weight:800;color:var(--text);line-height:1;">${val}</p><p style="font-size:10px;color:var(--text2);font-weight:600;margin-top:3px;">${lbl}</p></div>`;
+  const sStat = (val, lbl) => `<div style="flex:1;text-align:center;"><p style="font-size:17px;font-weight:800;color:var(--text);line-height:1;">${val}</p><p style="font-size:9.5px;color:var(--text2);font-weight:600;margin-top:3px;">${lbl}</p></div>`;
   const div = `<div style="width:1px;background:var(--line);margin:0 2px;"></div>`;
-  const summary = `<div class="card" style="display:flex;padding:16px 8px;margin-bottom:14px;">${sStat(avgMl, '平均奶量/日')}${div}${sStat(avgIntervalLabel, '平均餵奶間隔')}${div}${sStat(diaperCount, '排泄次數')}</div>`;
+  const summary = `<div class="card" style="display:flex;padding:16px 6px;margin-bottom:14px;">${sStat(avgMl, '平均奶量/日')}${div}${sStat(avgIntervalLabel, '平均間隔(不含夜間)')}${div}${sStat(poopCount, '排便次數')}${div}${sStat(peeCount, '尿尿次數')}</div>`;
 
   const byMap = {};
   evs.forEach(e => { const k = e.by || '未命名'; if (!byMap[k]) byMap[k] = { milk: 0, diaper: 0 }; if (e.type === 'milk') byMap[k].milk++; else byMap[k].diaper++; });
