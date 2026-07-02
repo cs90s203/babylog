@@ -15,7 +15,7 @@ const firebaseConfig = {
 // Server-side enforcement lives in Firestore Security Rules (see docs/sync.md) — this
 // client-side list is just so the UI can show a clear "not authorized" message instead
 // of a cryptic permission-denied error after a stranger's Google account signs in.
-const ALLOWED_EMAILS = ["cs90s203@gmail.com", "snowy5420@gmail.com"];
+const ALLOWED_EMAILS = ["cs90s203@gmail.com", "snowy5420@gmail.com", "lunamamahappy@gmail.com"];
 
 const FAMILY_PATH = "families/default"; // single-family app; see docs/data-model.md
 
