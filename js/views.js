@@ -352,7 +352,10 @@ function renderTodayTimeline(state) {
       kids += `<span style="color:${milkColorOf(r)};">${amt}</span>`;
       if (!compact) { const tag = mix ? '混合' : (r.formulaMl > 0 ? '配方乳' : '母乳'); kids += `<span style="font-size:10px;font-weight:700;color:${milkColorOf(r)};">${tag}</span>`; }
     } else kids += `<span>${compact ? (r.type === 'poop' ? '便' : '尿') : (r.type === 'poop' ? '排便' : '尿尿')}</span>`;
-    return `<div onpointerdown="A.startDrag('${r.id}',event.clientX,event.clientY)" title="${hm(new Date(r.time))}" class="chip" data-chip-id="${r.id}" style="background:${tintBg(r)};box-shadow:${active ? '0 6px 16px var(--shadow2)' : '0 1px 3px var(--shadow)'};transform:${active ? 'scale(1.05)' : 'none'};">${kids}</div>`;
+    // Confirms a just-committed drag with a brief glow instead of a toast popup (see
+    // App.dragEnd) — state.justUpdatedId is cleared again ~900ms later.
+    const glow = r.id === state.justUpdatedId ? 'animation:chipGlow .9s ease;' : '';
+    return `<div onpointerdown="A.startDrag('${r.id}',event.clientX,event.clientY)" title="${hm(new Date(r.time))}" class="chip" data-chip-id="${r.id}" style="background:${tintBg(r)};box-shadow:${active ? '0 6px 16px var(--shadow2)' : '0 1px 3px var(--shadow)'};transform:${active ? 'scale(1.05)' : 'none'};${glow}">${kids}</div>`;
   };
   clusters.forEach((cl, ci) => {
     // Events at (near) the same time cascade with a partial overlap (instead of wrapping

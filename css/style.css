@@ -93,6 +93,7 @@ button { cursor: pointer; }
 @keyframes slideUp { from { transform: translateY(100%) } to { transform: translateY(0) } }
 @keyframes spin { to { transform: rotate(360deg) } }
 @keyframes growBar { from { transform: scaleY(0) } to { transform: scaleY(1) } }
+@keyframes chipGlow { 0% { box-shadow: 0 0 0 0 var(--accent), 0 1px 3px var(--shadow) } 35% { box-shadow: 0 0 14px 4px var(--accent), 0 1px 3px var(--shadow) } 100% { box-shadow: 0 0 0 0 var(--accent), 0 1px 3px var(--shadow) } }
 
 .btn-row { display: flex; gap: 10px; justify-content: space-between; }
 .round-btn { border: none; border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; }

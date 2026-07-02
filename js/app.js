@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.3.5';
+const APP_VERSION = '2.3.6';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -26,6 +26,7 @@ const App = {
     editBy: '',
     confirmDelId: null,
     dragId: null,
+    justUpdatedId: null, // briefly set after a timeline drag commits, to glow that chip
     frontChipId: null, // which overlapping timeline chip (if any) is currently brought to front
     expandedGaps: [],
     numEdit: null, // { field, value } while a tap-to-edit number input is open
@@ -49,6 +50,7 @@ const App = {
   _holdTimer: null,
   _holdInterval: null,
   _sheetDrag: null,
+  _glowTimer: null,
 
   init() {
     Store.init();
@@ -358,8 +360,12 @@ const App = {
     if (!d) return;
     if (d.active) {
       if (d.pendingTime) Store.updateEvent(d.id, { time: d.pendingTime.toISOString() });
-      this.set({ dragId: null });
-      this.toast('🕑', '時間已更新');
+      // Confirmation is a brief glow on the chip itself instead of a toast — the chip
+      // already visibly settles into its new position on release, so a popup saying
+      // "time updated" was redundant and just delayed/blocked the view for 1.7s.
+      clearTimeout(this._glowTimer);
+      this.set({ dragId: null, justUpdatedId: d.id });
+      this._glowTimer = setTimeout(() => this.set({ justUpdatedId: null }), 900);
     }
     else if (!d.moved) {
       this.set({ dragId: null });
