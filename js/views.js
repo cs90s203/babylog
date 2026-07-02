@@ -46,18 +46,21 @@ function backIcon() { return `<svg width="9" height="15" viewBox="0 0 9 15" fill
 // close above the FAB without colliding with the home/stats/records/config icons on
 // either side.
 function pawButtons() {
-  const R = 40, spreadDeg = 72, size = 34;
+  // R/spreadDeg tuned so adjacent buttons' chord distance clears their combined diameter
+  // (with a few px to spare) instead of overlapping, while staying inside the horizontal
+  // gap to the home/stats/records/config icons on either side.
+  const R = 50, spreadDeg = 96, size = 32;
   const items = [
-    { emoji: '🍼', attrs: `onclick="A.openMilk()"` },
-    { emoji: '💩', attrs: `onclick="A.tap('poop')" onpointerdown="A.startPress('poop')" onpointerup="A.endPress()" onpointerleave="A.endPress()"` },
-    { emoji: '💧', attrs: `onclick="A.tap('pee')" onpointerdown="A.startPress('pee')" onpointerup="A.endPress()" onpointerleave="A.endPress()"` },
+    { emoji: '🍼', bg: '#FCD0A1', shadow: 'rgba(252,208,161,.55)', attrs: `onclick="A.openMilk()"` },
+    { emoji: '💩', bg: '#995D81', shadow: 'rgba(153,93,129,.4)', attrs: `onclick="A.tap('poop')" onpointerdown="A.startPress('poop')" onpointerup="A.endPress()" onpointerleave="A.endPress()"` },
+    { emoji: '💧', bg: '#9BB1FF', shadow: 'rgba(155,177,255,.5)', attrs: `onclick="A.tap('pee')" onpointerdown="A.startPress('pee')" onpointerup="A.endPress()" onpointerleave="A.endPress()"` },
   ];
   const n = items.length;
   return items.map((it, i) => {
     const angleDeg = -spreadDeg / 2 + (spreadDeg * i / (n - 1));
     const rad = angleDeg * Math.PI / 180;
     const dx = R * Math.sin(rad), dy = -R * Math.cos(rad);
-    return `<button ${it.attrs} style="position:absolute;left:calc(50% + ${dx.toFixed(1)}px - ${size / 2}px);top:${(dy - size / 2).toFixed(1)}px;width:${size}px;height:${size}px;border-radius:50%;border:none;background:var(--card);box-shadow:0 3px 10px var(--shadow);display:flex;align-items:center;justify-content:center;font-size:16px;z-index:5;">${it.emoji}</button>`;
+    return `<button ${it.attrs} style="position:absolute;left:calc(50% + ${dx.toFixed(1)}px - ${size / 2}px);top:${(dy - size / 2).toFixed(1)}px;width:${size}px;height:${size}px;border-radius:50%;border:none;background:${it.bg};opacity:.75;box-shadow:0 3px 10px ${it.shadow};display:flex;align-items:center;justify-content:center;font-size:15px;z-index:5;">${it.emoji}</button>`;
   }).join('');
 }
 function renderNav(state) {
