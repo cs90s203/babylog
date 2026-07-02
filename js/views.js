@@ -55,7 +55,7 @@ function pawButtons() {
     { emoji: '💩', bg: '#995D81', shadow: 'rgba(153,93,129,.4)', attrs: `onclick="A.tap('poop')" onpointerdown="A.startPress('poop')" onpointerup="A.endPress()" onpointerleave="A.endPress()"` },
     { emoji: '💧', bg: '#9BB1FF', shadow: 'rgba(155,177,255,.5)', attrs: `onclick="A.tap('pee')" onpointerdown="A.startPress('pee')" onpointerup="A.endPress()" onpointerleave="A.endPress()"` },
   ];
-  const n = items.length, dropPx = 10, sideOutPx = 5;
+  const n = items.length, dropPx = 15, sideOutPx = 5;
   return items.map((it, i) => {
     const angleDeg = -spreadDeg / 2 + (spreadDeg * i / (n - 1));
     const rad = angleDeg * Math.PI / 180;
