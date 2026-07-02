@@ -556,7 +556,15 @@ function renderFeedStats(state) {
     `<div style="display:flex;align-items:flex-end;gap:6px;height:120px;">${totals.map((tot, i) => `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;"><div style="width:100%;height:${Math.round(tot / aMax * 92)}px;border-radius:6px;overflow:hidden;display:flex;flex-direction:column;">${tot > 0 ? `<div style="height:${formulaMl[i] / tot * 100}%;background:#E8A33D;"></div><div style="flex:1;background:#FF8C6B;"></div>` : ''}</div><div style="font-size:9px;color:var(--text2);font-weight:600;">${labels[i]}</div></div>`).join('')}</div>
     <div style="display:flex;gap:14px;margin-top:12px;justify-content:center;">${[['#FF8C6B', '母乳'], ['#E8A33D', '配方']].map(([c, l]) => `<div style="display:flex;align-items:center;gap:4px;"><div style="width:9px;height:9px;border-radius:50%;background:${c};"></div><span style="font-size:11px;color:var(--text2);">${l}</span></div>`).join('')}</div>`);
 
-  return rangeTabs + summary + caregiverCard + milkChart + amtChart;
+  const poopCounts = bucketize(range, evs, 'poop').milkCounts;
+  const peeCounts = bucketize(range, evs, 'pee').milkCounts;
+  const diaperTotals = poopCounts.map((v, i) => v + peeCounts[i]);
+  const dMax = Math.max(1, ...diaperTotals);
+  const diaperChart = sCard(`尿布更換次數（${range === 'week' ? '每日' : range === 'month' ? '每週' : '每月'}）`,
+    `<div style="display:flex;align-items:flex-end;gap:6px;height:120px;">${diaperTotals.map((tot, i) => `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;"><div style="font-size:9px;color:var(--text3);font-weight:700;">${tot}</div><div style="width:100%;height:${Math.round(tot / dMax * 86) + (tot > 0 ? 6 : 0)}px;border-radius:6px;overflow:hidden;display:flex;flex-direction:column;">${tot > 0 ? `<div style="height:${poopCounts[i] / tot * 100}%;background:#C8965A;"></div><div style="flex:1;background:#79C3F0;"></div>` : ''}</div><div style="font-size:9px;color:var(--text2);font-weight:600;">${labels[i]}</div></div>`).join('')}</div>
+    <div style="display:flex;gap:14px;margin-top:12px;justify-content:center;">${[['#C8965A', '排便'], ['#79C3F0', '尿尿']].map(([c, l]) => `<div style="display:flex;align-items:center;gap:4px;"><div style="width:9px;height:9px;border-radius:50%;background:${c};"></div><span style="font-size:11px;color:var(--text2);">${l}</span></div>`).join('')}</div>`);
+
+  return rangeTabs + summary + caregiverCard + milkChart + amtChart + diaperChart;
 }
 function bucketize(range, evs, type) {
   const now = new Date();
