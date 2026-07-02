@@ -590,13 +590,23 @@ function renderFeedStats(state) {
     `<div style="display:flex;align-items:flex-end;gap:6px;height:120px;">${totals.map((tot, i) => `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;"><div style="width:100%;height:${Math.round(tot / aMax * 92)}px;border-radius:6px;overflow:hidden;display:flex;flex-direction:column;">${tot > 0 ? `<div style="height:${formulaMl[i] / tot * 100}%;background:#E8A33D;"></div><div style="flex:1;background:#FF8C6B;"></div>` : ''}</div><div style="font-size:9px;color:var(--text2);font-weight:600;">${labels[i]}</div></div>`).join('')}</div>
     <div style="display:flex;gap:14px;margin-top:12px;justify-content:center;">${[['#FF8C6B', '母乳'], ['#E8A33D', '配方']].map(([c, l]) => `<div style="display:flex;align-items:center;gap:4px;"><div style="width:9px;height:9px;border-radius:50%;background:${c};"></div><span style="font-size:11px;color:var(--text2);">${l}</span></div>`).join('')}</div>`);
 
-  const poopCounts = bucketize(range, evs, 'poop').milkCounts;
-  const peeCounts = bucketize(range, evs, 'pee').milkCounts;
-  const diaperTotals = poopCounts.map((v, i) => v + peeCounts[i]);
-  const dMax = Math.max(1, ...diaperTotals);
-  const diaperChart = sCard(`尿布更換次數（${range === 'week' ? '每日' : range === 'month' ? '每週' : '每月'}）`,
-    `<div style="display:flex;align-items:flex-end;gap:6px;height:120px;">${diaperTotals.map((tot, i) => `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;"><div style="font-size:9px;color:var(--text3);font-weight:700;">${tot}</div><div style="width:100%;height:${Math.round(tot / dMax * 86) + (tot > 0 ? 6 : 0)}px;border-radius:6px;overflow:hidden;display:flex;flex-direction:column;">${tot > 0 ? `<div style="height:${poopCounts[i] / tot * 100}%;background:#C8965A;"></div><div style="flex:1;background:#79C3F0;"></div>` : ''}</div><div style="font-size:9px;color:var(--text2);font-weight:600;">${labels[i]}</div></div>`).join('')}</div>
-    <div style="display:flex;gap:14px;margin-top:12px;justify-content:center;">${[['#C8965A', '排便'], ['#79C3F0', '尿尿']].map(([c, l]) => `<div style="display:flex;align-items:center;gap:4px;"><div style="width:9px;height:9px;border-radius:50%;background:${c};"></div><span style="font-size:11px;color:var(--text2);">${l}</span></div>`).join('')}</div>`);
+  // A diaper change is one or more poop/pee events logged at the *exact same* timestamp —
+  // per the user, their baby rarely finishes everything in one go, so even a 1-minute gap
+  // must NOT be merged (unlike the timeline's own event clustering, which is a looser
+  // ~11-minute visual grouping for a different purpose). Simply summing poop+pee event
+  // counts double-counts every change where both were logged together.
+  const changes = dedupeDiaperChanges(evs);
+  const { counts: diaperCounts, poopCounts: dPoop, peeCounts: dPee } = bucketizeChanges(range, changes);
+  const dMax = Math.max(1, ...diaperCounts);
+  const diaperChart = sCard(`換尿布次數（${range === 'week' ? '每日' : range === 'month' ? '每週' : '每月'}）`,
+    `<div style="display:flex;align-items:flex-end;gap:6px;height:150px;">${diaperCounts.map((cnt, i) => `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:1px;">
+      <div style="font-size:10px;font-weight:800;color:var(--text);line-height:1.3;">${cnt}</div>
+      <div style="font-size:9px;font-weight:700;color:#C8965A;line-height:1.3;">${dPoop[i]}</div>
+      <div style="font-size:9px;font-weight:700;color:#79C3F0;line-height:1.3;">${dPee[i]}</div>
+      <div style="width:100%;margin-top:5px;height:${Math.round(cnt / dMax * 76) + (cnt > 0 ? 6 : 0)}px;background:linear-gradient(180deg,#C8965A,#79C3F0);border-radius:6px;"></div>
+      <div style="font-size:9px;color:var(--text2);font-weight:600;margin-top:6px;">${labels[i]}</div>
+    </div>`).join('')}</div>
+    <div style="display:flex;gap:14px;margin-top:12px;justify-content:center;">${[['var(--text)', '換尿布次數'], ['#C8965A', '排便'], ['#79C3F0', '尿尿']].map(([c, l]) => `<div style="display:flex;align-items:center;gap:4px;"><div style="width:9px;height:9px;border-radius:50%;background:${c};"></div><span style="font-size:11px;color:var(--text2);">${l}</span></div>`).join('')}</div>`);
 
   return rangeTabs + summary + caregiverCard + milkChart + amtChart + diaperChart;
 }
@@ -628,6 +638,32 @@ function bucketizeMl(range, evs) {
     breastMl[idx] += e.breastMl || 0; formulaMl[idx] += e.formulaMl || 0;
   });
   return { breastMl, formulaMl };
+}
+// One diaper change = every poop/pee event sharing the exact same timestamp (strict —
+// even a 1-minute gap is a separate change, per how this family actually uses diapers).
+function dedupeDiaperChanges(evs) {
+  const diaper = evs.filter(e => e.type === 'poop' || e.type === 'pee').slice().sort((a, b) => new Date(a.time) - new Date(b.time));
+  const changes = [];
+  diaper.forEach(e => {
+    const t = new Date(e.time).getTime();
+    const last = changes[changes.length - 1];
+    if (last && last.time === t) { if (e.type === 'poop') last.poop++; else last.pee++; }
+    else changes.push({ time: t, poop: e.type === 'poop' ? 1 : 0, pee: e.type === 'pee' ? 1 : 0 });
+  });
+  return changes;
+}
+function bucketizeChanges(range, changes) {
+  const n = range === 'week' ? 7 : range === 'month' ? 5 : 12;
+  const counts = new Array(n).fill(0), poopCounts = new Array(n).fill(0), peeCounts = new Array(n).fill(0);
+  changes.forEach(c => {
+    const d = new Date(c.time);
+    let idx;
+    if (range === 'week') idx = (d.getDay() + 6) % 7;
+    else if (range === 'month') idx = Math.min(4, Math.floor((d.getDate() - 1) / 7));
+    else idx = d.getMonth();
+    counts[idx]++; poopCounts[idx] += c.poop; peeCounts[idx] += c.pee;
+  });
+  return { counts, poopCounts, peeCounts };
 }
 
 function renderGrowthStats(state) {
