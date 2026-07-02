@@ -311,7 +311,11 @@ function renderTodayTimeline(state) {
         <span style="font-size:10px;color:var(--text3);font-weight:600;white-space:nowrap;">⋯ ${hm(d0)}${dtag(d0)}–${hm(d1)}${dtag(d1)} 無紀錄 ▸</span>
         <div style="flex:1;height:0;border-top:1.5px dashed var(--track);"></div></div>`;
     } else {
-      hourMarks.filter(m => m.pos >= sg.h0 - 1e-6 && m.pos <= sg.h1 + 1e-6).forEach(m => {
+      // Hour numbers are only useful up through "now" — past that is the empty 3h
+      // look-ahead buffer with no events (and, per the request, roughly where the legend
+      // row sits below the track), so hide hour marks beyond nowPos instead of cluttering
+      // that dead space with 01/02/03 labels that don't correspond to anything.
+      hourMarks.filter(m => m.pos >= sg.h0 - 1e-6 && m.pos <= sg.h1 + 1e-6 && m.pos <= nowPos + 1e-6).forEach(m => {
         const y = yOfAdjusted(m.pos);
         const hh = m.date.getHours();
         // The midnight date badge (e.g. "7/2") sits in its own column to the LEFT of the
@@ -319,7 +323,7 @@ function renderTodayTimeline(state) {
         // the hour text — appending it inline pushed "00" itself out of alignment with
         // every other hour number (which are always exactly 2 characters).
         const dateBadge = hh === 0
-          ? `<div style="position:absolute;left:-28px;width:24px;text-align:right;top:${y - 6}px;font-size:8.5px;color:var(--text3);opacity:.7;white-space:nowrap;">${m.date.getMonth() + 1}/${m.date.getDate()}</div>`
+          ? `<div style="position:absolute;left:-25px;width:24px;text-align:right;top:${y - 6}px;font-size:8.5px;color:var(--text3);opacity:.7;white-space:nowrap;">${m.date.getMonth() + 1}/${m.date.getDate()}</div>`
           : '';
         // Hour number lives in its own gutter column at the far left, separate from the
         // event time labels (which sit closer to the dot) — they used to share the same
