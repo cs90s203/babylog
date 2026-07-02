@@ -49,7 +49,7 @@ function pawButtons() {
   // R/spreadDeg tuned so adjacent buttons' chord distance clears their combined diameter
   // (with a few px to spare) instead of overlapping, while staying inside the horizontal
   // gap to the home/stats/records/config icons on either side.
-  const R = 50, spreadDeg = 96, size = 32;
+  const R = 50, spreadDeg = 96, size = Math.round(32 * 1.15);
   const items = [
     { emoji: '🍼', bg: '#FCD0A1', shadow: 'rgba(252,208,161,.55)', attrs: `onclick="A.openMilk()"` },
     { emoji: '💩', bg: '#995D81', shadow: 'rgba(153,93,129,.4)', attrs: `onclick="A.tap('poop')" onpointerdown="A.startPress('poop')" onpointerup="A.endPress()" onpointerleave="A.endPress()"` },
@@ -62,7 +62,7 @@ function pawButtons() {
     let dx = R * Math.sin(rad);
     const dy = -R * Math.cos(rad) + dropPx;
     if (dx !== 0) dx += Math.sign(dx) * sideOutPx; // push the left/right buttons further out, middle stays centered
-    return `<button ${it.attrs} style="position:absolute;left:calc(50% + ${dx.toFixed(1)}px - ${size / 2}px);top:${(dy - size / 2).toFixed(1)}px;width:${size}px;height:${size}px;border-radius:50%;border:none;background:${it.bg};box-shadow:0 3px 10px ${it.shadow};display:flex;align-items:center;justify-content:center;font-size:15px;z-index:5;">${it.emoji}</button>`;
+    return `<button ${it.attrs} style="position:absolute;left:calc(50% + ${dx.toFixed(1)}px - ${size / 2}px);top:${(dy - size / 2).toFixed(1)}px;width:${size}px;height:${size}px;border-radius:50%;border:none;background:${it.bg};box-shadow:0 3px 10px ${it.shadow};display:flex;align-items:center;justify-content:center;font-size:17px;z-index:5;">${it.emoji}</button>`;
   }).join('');
 }
 function renderNav(state) {
