@@ -194,7 +194,6 @@ function renderTodayTimeline(state) {
     .map(e => ({ ...e, h: posOf(new Date(e.time)) }));
   const pxH = 40, padTop = 14, HOURW = 22, axisX = 70, half = 19, keepR = 0.8, collapseMin = 3, collapsePx = 46;
   const dragEv = state.dragId ? windowEvents.find(e => e.id === state.dragId) : null;
-  const baseRecs = dragEv ? windowEvents.filter(e => e.id !== state.dragId) : windowEvents;
   const startH = 0, endH = posOf(winEnd); // fixed window: always 0 .. 27
   const nowPos = posOf(now); // always 24, but computed for clarity/robustness
   const pts = windowEvents.map(e => e.h).concat([nowPos]);
@@ -229,7 +228,17 @@ function renderTodayTimeline(state) {
     return { compact, lines };
   };
 
-  const sorted = [...baseRecs].sort((a, b) => a.h - b.h);
+  // Cluster membership/positions are computed from the *full* event set (including the
+  // event currently being dragged, at its still-unchanged stored position) — dragMove
+  // never touches Store, so windowEvents doesn't actually change during a drag. An earlier
+  // version excluded the dragged event from this clustering step entirely, which
+  // recomputed whichever cluster it belonged to (its mean position, whether it needs
+  // compact/stacked layout) the instant a drag started, causing that cluster — and
+  // anything pushed down after it — to visibly jump before the pointer had even moved.
+  // Keeping it in the layout math freezes everyone else in place; only its own chip is
+  // skipped when rendering (see itemsHtml below), since the floating #drow block already
+  // shows it following the pointer.
+  const sorted = [...windowEvents].sort((a, b) => a.h - b.h);
   const clusters = [];
   sorted.forEach(r => { const last = clusters[clusters.length - 1]; if (last && Math.abs(r.h - last.items[0].h) <= 0.18) last.items.push(r); else clusters.push({ items: [r] }); });
   let lastY = -999, lastRowExtra = 0;
@@ -365,7 +374,12 @@ function renderTodayTimeline(state) {
     // stays reachable even when piled up. cl.compact was already decided above (it also
     // feeds the trackH/spacing math), so reuse it rather than recomputing.
     const compact = cl.compact;
-    const itemsHtml = cl.items.map((r, i) => {
+    // The dragged item itself is skipped here — it's shown by the floating #drow block
+    // instead — but its cluster-mates (if any) still render normally, at the cluster's
+    // frozen position (cl.y/cl.time, computed above from the full item set).
+    const visibleItems = cl.items.filter(r => r.id !== state.dragId);
+    if (visibleItems.length === 0) return; // whole cluster was just the dragged item — nothing left to draw here
+    const itemsHtml = visibleItems.map((r, i) => {
       const z = r.id === state.frontChipId ? 50 : (2 + i);
       const ml = (compact && i > 0) ? -18 : 0;
       return `<div style="position:relative;z-index:${z};margin-left:${ml}px;">${chip(r, false, compact)}</div>`;
@@ -373,7 +387,7 @@ function renderTodayTimeline(state) {
     const rowStyle = compact
       ? `display:flex;align-items:center;`
       : `display:flex;align-items:center;gap:6px;flex-wrap:wrap;`;
-    nodes += `<div style="position:absolute;left:${axisX - 4}px;top:${cl.y - 5}px;width:10px;height:10px;border-radius:50%;background:${dotColor(cl.items[0])};border:2px solid var(--card);z-index:2;"></div>
+    nodes += `<div style="position:absolute;left:${axisX - 4}px;top:${cl.y - 5}px;width:10px;height:10px;border-radius:50%;background:${dotColor(visibleItems[0])};border:2px solid var(--card);z-index:2;"></div>
       <div style="position:absolute;left:${HOURW}px;width:${axisX - HOURW - 8}px;text-align:right;top:${cl.y - 8}px;font-size:12px;font-weight:800;color:var(--text);z-index:2;">${hm(dateOfPos(cl.time))}</div>
       <div style="position:absolute;left:${axisX + 14}px;right:4px;top:${cl.y - half}px;min-height:${2 * half}px;${rowStyle}z-index:2;">${itemsHtml}</div>`;
   });
