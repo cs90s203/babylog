@@ -6,7 +6,7 @@
 
 const N_RECENT = 8; // how many recent intervals (per bucket) to consider
 const MIN_DATA_DAYS = 2; // need at least this many days of feed history before predicting
-const EARLY_HOUR = 6; // a first tracking day only counts as "complete" if logging started before this hour — same rule as the stats page's validStatsDays()
+const PREDICT_EARLY_HOUR = 6; // a first tracking day only counts as "complete" if logging started before this hour — same rule as the stats page's validStatsDays() (separate constant name — classic <script> tags share one global scope, so this can't reuse views.js's EARLY_HOUR)
 
 function median(arr) {
   if (!arr.length) return null;
@@ -51,7 +51,7 @@ function validFeedDates(feeds, now) {
     const d = new Date(f.time);
     const dk = dateKey(d);
     if (dk === todayDk) return;
-    if (dk === firstDk && firstTime.getHours() >= EARLY_HOUR) return;
+    if (dk === firstDk && firstTime.getHours() >= PREDICT_EARLY_HOUR) return;
     valid.add(dk);
   });
   return valid;

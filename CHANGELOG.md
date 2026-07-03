@@ -3,6 +3,22 @@
 版號規則跟 JPL（日語學習 App）主 dev 對話一致：`MAJOR.MINOR.PATCH`——新功能升 MINOR、
 架構級的重大改動升 MAJOR、bug 修正/小改善升 PATCH。版本號顯示在設定頁最下方。
 
+## v2.15.1 — 2026-07-04
+
+**緊急 Bug 修正：整個 App 打開沒畫面**
+
+- v2.15.0 把整個 App 弄壞了——`predict.js` 跟 `views.js` 兩個檔案都宣告了同一個
+  `const EARLY_HOUR`，這個專案沒有用 ES module（純 `<script>` 標籤），同一份網頁裡所有
+  `<script>` 標籤其實共用同一個全域作用域，同名的 `const` 宣告兩次會直接丟出
+  `SyntaxError: Identifier 'EARLY_HOUR' has already been declared`，整個 `views.js`
+  當場停止解析，`render()` 等函式全部沒定義，App 開起來完全空白。
+- 修法：把 `predict.js` 裡的那個常數改名成 `PREDICT_EARLY_HOUR`，避開命名衝突；順便掃過
+  所有 js 檔案的頂層變數/函式命名，確認沒有其他重複。
+- 這次的測試疏漏：先前驗證 v2.15.0 時，我是直接呼叫 `predictNextFeed()` 這個函式本身
+  （它在 `predict.js`，比 `views.js`先載入，衝突發生前就已經定義好），沒有實際確認整個
+  App 畫面有沒有正常渲染出來，才會沒抓到這個問題。以後測試會加一道「確認畫面真的有內容、
+  沒有 JS 錯誤」的檢查，不能只測試單一函式。
+
 ## v2.15.0 — 2026-07-04
 
 **新功能：預計下一餐演算法大升級——早中晚分段、首末餐錨點、資料有效性過濾**
