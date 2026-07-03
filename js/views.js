@@ -15,6 +15,12 @@ function milkColorOf(ev) { return (ev.breastMl > 0 && ev.formulaMl > 0) ? '#C77D
 function dotColor(ev) { return ev.type === 'milk' ? milkColorOf(ev) : ev.type === 'poop' ? '#C8965A' : '#79C3F0'; }
 function tintBg(ev) { return ev.type === 'milk' ? ((ev.breastMl > 0 && ev.formulaMl > 0) ? 'var(--tMix)' : (ev.formulaMl > 0 ? 'var(--tMilkF)' : 'var(--tMilkB)')) : ev.type === 'poop' ? 'var(--tPoop)' : 'var(--tPee)'; }
 function emojiOf(t) { return t === 'milk' ? '🍼' : t === 'poop' ? '💩' : '💧'; }
+// Baby profile avatar — a photo (compressed thumbnail, see App.handleAvatarFile) takes
+// precedence over the emoji when both are set. Tapping the circle opens the picker sheet.
+function babyAvatarInner(s, sizePx) {
+  if (s.babyPhoto) return `<img src="${s.babyPhoto}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" />`;
+  return `<span style="font-size:${Math.round(sizePx * 0.46)}px;">${esc(s.babyEmoji || '👶')}</span>`;
+}
 
 // ============================= THEME =============================
 function applyTheme(state) {
@@ -491,7 +497,7 @@ function renderHome(state) {
       </div>
       <div style="display:flex;align-items:center;gap:10px;">
         <button onclick="A.toggleTheme()" style="width:40px;height:40px;border-radius:50%;background:var(--card);border:none;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px var(--shadow);">${themeIcon(state)}</button>
-        <div style="width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,#FFCC70,#FF8C6B);display:flex;align-items:center;justify-content:center;font-size:22px;box-shadow:0 4px 14px rgba(240,165,0,.35);">👶</div>
+        <button onclick="A.openAvatarPicker()" style="width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,#FFCC70,#FF8C6B);border:none;display:flex;align-items:center;justify-content:center;overflow:hidden;box-shadow:0 4px 14px rgba(240,165,0,.35);">${babyAvatarInner(Store.data.settings, 48)}</button>
       </div>
     </div>
     <div style="margin:0 16px 14px;background:var(--card);border-radius:18px;padding:18px 20px;box-shadow:0 2px 16px var(--shadow);">
@@ -924,7 +930,7 @@ function renderSettings(state) {
       ${sectionLabel('寶寶資料（所有裝置共用）')}
       <div class="card" style="padding:20px 18px;">
         <div style="display:flex;align-items:center;gap:14px;margin-bottom:16px;">
-          <div style="width:60px;height:60px;border-radius:50%;background:linear-gradient(135deg,#FFCC70,#FF8C6B);display:flex;align-items:center;justify-content:center;font-size:30px;flex-shrink:0;">👶</div>
+          <button onclick="A.openAvatarPicker()" style="width:60px;height:60px;border-radius:50%;background:linear-gradient(135deg,#FFCC70,#FF8C6B);border:none;display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;">${babyAvatarInner(Store.data.settings, 60)}</button>
           <div style="flex:1;min-width:0;">
             <input type="text" value="${esc(s.babyName)}" onchange="A.setBabyName(this.value)" placeholder="寶寶名字" style="border:none;background:transparent;font-size:21px;font-weight:800;padding:0;color:var(--text);border-radius:0;" />
             <p style="font-size:12px;color:var(--text2);margin-top:2px;">${babyAgeLabel()}</p>
@@ -1135,6 +1141,29 @@ function renderGrowthSheet(state, reopen) {
     </div>
   </div>`;
 }
+const AVATAR_EMOJIS = ['👶', '🧒', '👧', '👦', '🐣', '🍼', '🧸', '🐻', '🐰', '🦁', '🐼', '🐶'];
+function renderAvatarSheet(state, reopen) {
+  const s = Store.data.settings;
+  const emojiGrid = AVATAR_EMOJIS.map(e => {
+    const active = !s.babyPhoto && (s.babyEmoji || '👶') === e;
+    return `<button onclick="A.setBabyEmoji('${e}')" style="width:42px;height:42px;border-radius:50%;border:${active ? '2px solid var(--accent)' : 'none'};background:var(--card2);font-size:21px;display:flex;align-items:center;justify-content:center;">${e}</button>`;
+  }).join('');
+  return `<div class="sheet-overlay" onclick="A.closeSheet()">
+    <div class="sheet" onclick="event.stopPropagation()" onpointerdown="A.startSheetDrag(event)" style="${sheetAnim(reopen)}">
+      <div class="sheet-handle"></div>
+      <h2 style="font-size:23px;font-weight:800;margin-bottom:16px;color:var(--text);">寶寶頭像</h2>
+      <div style="display:flex;justify-content:center;margin-bottom:18px;">
+        <div style="width:74px;height:74px;border-radius:50%;background:linear-gradient(135deg,#FFCC70,#FF8C6B);display:flex;align-items:center;justify-content:center;overflow:hidden;">${babyAvatarInner(s, 74)}</div>
+      </div>
+      <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;">選 Emoji</p>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:18px;">${emojiGrid}</div>
+      <input id="f-avatar-file" type="file" accept="image/*" style="display:none;" onchange="A.handleAvatarFile(this.files[0])" />
+      <button onclick="document.getElementById('f-avatar-file').click()" style="width:100%;background:var(--card2);border:1.5px dashed var(--inpBorder);border-radius:16px;padding:14px;font-size:14px;font-weight:700;color:var(--text2);margin-bottom:8px;">📷 上傳照片</button>
+      ${s.babyPhoto ? `<button onclick="A.removeBabyPhoto()" style="width:100%;background:transparent;border:none;padding:10px;font-size:13px;font-weight:700;color:#E5573D;">移除照片，改用 Emoji</button>` : ''}
+      <button onclick="A.closeSheet()" class="text-btn">關閉</button>
+    </div>
+  </div>`;
+}
 
 function renderDeleteConfirm(state) {
   const rec = Store.data.events.find(e => e.id === state.confirmDelId);
@@ -1230,6 +1259,7 @@ function renderSheet(state) {
   if (state.sheet === 'edit') return renderEditSheet(state, reopen);
   if (state.sheet === 'editRec') return renderEditRecSheet(state, reopen);
   if (state.sheet === 'growth') return renderGrowthSheet(state, reopen);
+  if (state.sheet === 'avatar') return renderAvatarSheet(state, reopen);
   return '';
 }
 function sheetAnim(reopen) { return reopen ? 'animation:none;' : ''; }

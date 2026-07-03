@@ -28,6 +28,8 @@ function defaultData() {
       babyName: '',
       babyBirth: '',
       babySex: '',
+      babyEmoji: '👶',
+      babyPhoto: '', // compressed base64 JPEG thumbnail; takes precedence over babyEmoji when set
       duration: {
         milk: { mode: 'end', minutes: 15 },
         poop: { mode: 'end', minutes: 15 },

@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.10.1';
+const APP_VERSION = '2.11.0';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -462,6 +462,36 @@ const App = {
   setBabyName(v) { Store.updateSettings({ babyName: v }); },
   setBabyBirth(v) { Store.updateSettings({ babyBirth: v }); },
   setBabySex(v) { Store.updateSettings({ babySex: v }); },
+
+  // ---- baby avatar: emoji or a compressed photo thumbnail, see renderAvatarSheet ----
+  openAvatarPicker() { this.set({ sheet: 'avatar' }); },
+  setBabyEmoji(e) { Store.updateSettings({ babyEmoji: e, babyPhoto: '' }); this.set({ sheet: null }); },
+  removeBabyPhoto() { Store.updateSettings({ babyPhoto: '' }); this.set({ sheet: null }); },
+  // Resizes/crops to a small square JPEG before storing — this goes straight into the
+  // settings document (synced as plain JSON, same as everything else), so it needs to stay
+  // well under Firestore's 1MB document limit and not bloat every settings sync. A proper
+  // photo library would use Cloud Storage instead, but that's a separate Firebase product
+  // this app doesn't use yet — a compressed thumbnail is plenty for a single avatar photo.
+  handleAvatarFile(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const SIZE = 160;
+        const canvas = document.createElement('canvas');
+        canvas.width = SIZE; canvas.height = SIZE;
+        const ctx = canvas.getContext('2d');
+        const side = Math.min(img.width, img.height);
+        const sx = (img.width - side) / 2, sy = (img.height - side) / 2;
+        ctx.drawImage(img, sx, sy, side, side, 0, 0, SIZE, SIZE);
+        Store.updateSettings({ babyPhoto: canvas.toDataURL('image/jpeg', 0.7) });
+        this.set({ sheet: null });
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  },
   setCaregiver(v) { Store.setCaregiver(v); },
   setDurationMode(type, mode) { Store.updateDuration(type, { mode }); },
   setDurationMin(type, delta) {
