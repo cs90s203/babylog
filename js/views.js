@@ -613,10 +613,19 @@ function renderFeedStats(state) {
   const evs = Store.liveEvents().filter(e => { const t = new Date(e.time); return t >= from && t <= to; });
   const milks = evs.filter(e => e.type === 'milk');
   const totalMl = milks.reduce((s, e) => s + (e.amountMl || 0), 0);
-  const days = Math.max(1, Math.round((to - from) / 86400000) + 1);
+  // Calendar-date span (not ms/86400000) so a partial "to" (now, mid-day) doesn't produce
+  // fractional/rounding artifacts — counts distinct dates from `from` through `to`
+  // inclusive. When the viewed period is the current, still-in-progress one (offset 0, so
+  // `to` is "now"), today hasn't finished yet and would drag every daily average down with
+  // an artificially low count — exclude it from the divisor. A past period (offset < 0)
+  // already ran its full course, so nothing gets excluded there.
+  const rawDays = Math.round((new Date(to.getFullYear(), to.getMonth(), to.getDate()) - new Date(from.getFullYear(), from.getMonth(), from.getDate())) / 86400000) + 1;
+  const days = offset === 0 ? Math.max(1, rawDays - 1) : rawDays;
   const avgMl = Math.round(totalMl / days);
   const poopCount = evs.filter(e => e.type === 'poop').length;
   const peeCount = evs.filter(e => e.type === 'pee').length;
+  const avgPoop = Math.round(poopCount / days);
+  const avgPee = Math.round(peeCount / days);
   const sortedMilks = milks.slice().sort((a, b) => new Date(a.time) - new Date(b.time));
   // Exclude the overnight stretch from the average — not a fixed clock window (babies'
   // sleep timing varies night to night), but dynamically: any interval whose two feeds
@@ -638,7 +647,7 @@ function renderFeedStats(state) {
     <p style="text-align:center;font-size:12px;color:var(--text2);font-weight:600;margin-bottom:14px;">${esc(statsPeriodLabel(range, offset))}</p>`;
   const sStat = (val, lbl) => `<div style="flex:1;text-align:center;"><p style="font-size:17px;font-weight:800;color:var(--text);line-height:1;">${val}</p><p style="font-size:9.5px;color:var(--text2);font-weight:600;margin-top:3px;">${lbl}</p></div>`;
   const div = `<div style="width:1px;background:var(--line);margin:0 2px;"></div>`;
-  const summary = `<div class="card" style="display:flex;padding:16px 6px;margin-bottom:14px;">${sStat(avgMl, '平均奶量/日')}${div}${sStat(avgIntervalLabel, '平均間隔(不含夜間)')}${div}${sStat(poopCount, '排便次數')}${div}${sStat(peeCount, '尿尿次數')}</div>`;
+  const summary = `<div class="card" style="display:flex;padding:16px 6px;margin-bottom:14px;">${sStat(avgMl, '平均奶量/日')}${div}${sStat(avgIntervalLabel, '平均間隔(不含夜間)')}${div}${sStat(avgPoop, '平均排便/日')}${div}${sStat(avgPee, '平均尿尿/日')}</div>`;
 
   const byMap = {};
   evs.forEach(e => { const k = e.by || '未命名'; if (!byMap[k]) byMap[k] = { milk: 0, diaper: 0 }; if (e.type === 'milk') byMap[k].milk++; else byMap[k].diaper++; });
