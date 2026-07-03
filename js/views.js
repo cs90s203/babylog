@@ -606,26 +606,57 @@ function statsBucketLabel(range, offset, i) {
   if (range === 'month') { const w0 = new Date(s); w0.setDate(s.getDate() + i * 7); const w1 = new Date(w0); w1.setDate(w0.getDate() + 6); return `${w0.getMonth() + 1}/${w0.getDate()}–${w1.getMonth() + 1}/${w1.getDate()}`; }
   return `${i + 1}月`;
 }
+// How many days actually count toward a "per day" average for the viewed period. A
+// calendar-date span alone overcounts in two situations:
+//  - the period is still in progress (offset 0, so `to` is "now") — today hasn't
+//    finished yet and would drag every average down with an artificially low count.
+//  - tracking itself hadn't started yet on some of the period's leading days (e.g. the
+//    family only started using the app on a Wednesday) — those days show 0 events not
+//    because nothing happened, but because nobody was logging. The very first day
+//    tracking began only counts if logging started early enough (before EARLY_HOUR) to
+//    represent a genuinely complete day; a first day that started, say, mid-afternoon
+//    gets excluded too, same as the leading empty days before it.
+const EARLY_HOUR = 6;
+// Returns the set of "valid" calendar dates (as dayKey strings) for averaging purposes —
+// see the note above. Events falling on days NOT in this set must also be excluded from
+// whatever they're being averaged (not just left out of the day count), otherwise the
+// numerator still includes activity from days the denominator no longer counts, which
+// would inflate the average rather than fix it.
+function validStatsDays(from, to, offset) {
+  const all = Store.liveEvents();
+  const firstEverTime = all.length ? new Date(Math.min(...all.map(e => new Date(e.time).getTime()))) : null;
+  const firstDate = firstEverTime ? new Date(firstEverTime.getFullYear(), firstEverTime.getMonth(), firstEverTime.getDate()) : null;
+  const toDate = new Date(to.getFullYear(), to.getMonth(), to.getDate());
+  const valid = new Set();
+  for (let d = new Date(from.getFullYear(), from.getMonth(), from.getDate()); d <= toDate; d.setDate(d.getDate() + 1)) {
+    if (offset === 0 && d.getTime() === toDate.getTime()) continue; // today, still in progress
+    if (firstDate) {
+      if (d < firstDate) continue; // before tracking started at all
+      if (d.getTime() === firstDate.getTime() && firstEverTime.getHours() >= EARLY_HOUR) continue; // first day started too late to be a full day
+    }
+    valid.add(dayKey(d));
+  }
+  return valid;
+}
 function renderFeedStats(state) {
   const range = state.statsRange;
   const offset = state.statsPeriodOffset || 0;
   const [from, to] = rangeBounds(range, offset);
   const evs = Store.liveEvents().filter(e => { const t = new Date(e.time); return t >= from && t <= to; });
-  const milks = evs.filter(e => e.type === 'milk');
-  const totalMl = milks.reduce((s, e) => s + (e.amountMl || 0), 0);
-  // Calendar-date span (not ms/86400000) so a partial "to" (now, mid-day) doesn't produce
-  // fractional/rounding artifacts — counts distinct dates from `from` through `to`
-  // inclusive. When the viewed period is the current, still-in-progress one (offset 0, so
-  // `to` is "now"), today hasn't finished yet and would drag every daily average down with
-  // an artificially low count — exclude it from the divisor. A past period (offset < 0)
-  // already ran its full course, so nothing gets excluded there.
-  const rawDays = Math.round((new Date(to.getFullYear(), to.getMonth(), to.getDate()) - new Date(from.getFullYear(), from.getMonth(), from.getDate())) / 86400000) + 1;
-  const days = offset === 0 ? Math.max(1, rawDays - 1) : rawDays;
+  const validDays = validStatsDays(from, to, offset);
+  const days = Math.max(1, validDays.size);
+  // Only used for the three "per day" summary averages below — the bucketed charts and
+  // caregiver breakdown further down intentionally keep using the full `evs` (unfiltered),
+  // since those are meant to show what actually happened each day, including partial ones.
+  const evsForAvg = evs.filter(e => validDays.has(dayKey(new Date(e.time))));
+  const milksForAvg = evsForAvg.filter(e => e.type === 'milk');
+  const totalMl = milksForAvg.reduce((s, e) => s + (e.amountMl || 0), 0);
   const avgMl = Math.round(totalMl / days);
-  const poopCount = evs.filter(e => e.type === 'poop').length;
-  const peeCount = evs.filter(e => e.type === 'pee').length;
+  const poopCount = evsForAvg.filter(e => e.type === 'poop').length;
+  const peeCount = evsForAvg.filter(e => e.type === 'pee').length;
   const avgPoop = Math.round(poopCount / days);
   const avgPee = Math.round(peeCount / days);
+  const milks = evs.filter(e => e.type === 'milk');
   const sortedMilks = milks.slice().sort((a, b) => new Date(a.time) - new Date(b.time));
   // Exclude the overnight stretch from the average — not a fixed clock window (babies'
   // sleep timing varies night to night), but dynamically: any interval whose two feeds
