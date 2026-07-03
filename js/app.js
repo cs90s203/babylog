@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.13.0';
+const APP_VERSION = '2.13.1';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -99,7 +99,24 @@ const App = {
   goStats() { this.set({ screen: 'stats', sheet: null }); },
   goRecords() { this.set({ screen: 'records', sheet: null }); },
   goConfig() { this.set({ screen: 'config', sheet: null }); },
-  closeSheet() { this.set({ sheet: null }); },
+  closeSheet() {
+    if (this.state.sheet === 'growth') this.resetZoom();
+    this.set({ sheet: null });
+  },
+  // iOS Safari zooms the viewport in when a focused input's font-size is under 16px (the
+  // growth sheet's weight/height/head fields are the only ones in the app small enough to
+  // trigger it) and is supposed to zoom back out on blur — but that often doesn't fire
+  // when the blur happens because we just tore down the whole sheet via a full re-render,
+  // rather than the user calmly tapping elsewhere. Forcing maximum-scale down to 1.0
+  // snaps the zoom back immediately; restoring the original viewport content right after
+  // lets the user pinch-zoom normally again afterward.
+  resetZoom() {
+    const viewport = document.querySelector('meta[name=viewport]');
+    if (!viewport) return;
+    const original = viewport.getAttribute('content');
+    viewport.setAttribute('content', original + ', maximum-scale=1.0');
+    setTimeout(() => viewport.setAttribute('content', original), 350);
+  },
 
   // ---- stats: period switching + swipe navigation + tap-to-expand ml bar ----
   setStatsRange(range) { this.set({ statsRange: range, statsPeriodOffset: 0, statsExpandedBar: null }); },
@@ -423,6 +440,7 @@ const App = {
     });
   },
   saveGrowth() {
+    this.resetZoom();
     // Same reasoning as closeWelcome/_editByValue: these fields have no onchange binding,
     // read straight from the DOM at submit time.
     const dv = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
@@ -439,7 +457,10 @@ const App = {
     }
     this.set({ sheet: null, editingGrowthId: null });
   },
-  deleteFromGrowthEdit() { this.set({ sheet: null, confirmDelGrowthId: this.state.editingGrowthId, editingGrowthId: null }); },
+  deleteFromGrowthEdit() {
+    this.resetZoom();
+    this.set({ sheet: null, confirmDelGrowthId: this.state.editingGrowthId, editingGrowthId: null });
+  },
   cancelDeleteGrowth() { this.set({ confirmDelGrowthId: null }); },
   doDeleteGrowth() {
     const id = this.state.confirmDelGrowthId;
