@@ -751,39 +751,79 @@ function renderGrowthStats(state) {
   const gm = state.growthMetric;
   const baby = Store.data.settings;
   const hasProfile = !!(baby.babyBirth && baby.babySex);
-  const AGES = [0, 3, 6, 9, 12, 15, 18, 21, 24];
   const PCTS = [3, 15, 50, 85, 97];
   const meta = { weight: { unit: 'kg', label: '體重', yr: [2, 16] }, height: { unit: 'cm', label: '身高', yr: [45, 95] }, head: { unit: 'cm', label: '頭圍', yr: [32, 52] } }[gm];
   const ageOf = (ds) => (new Date(ds) - new Date(baby.babyBirth)) / 86400000 / 30.4375;
+  const growth = Store.liveGrowth();
+  const bpts = growth.map(r => ({ a: hasProfile ? ageOf(r.date) : null, v: r[gm], date: r.date, id: r.id })).filter(p => p.v != null && (!hasProfile || (p.a >= 0 && p.a <= 24.5))).sort((a, b) => hasProfile ? a.a - b.a : new Date(a.date) - new Date(b.date));
+
+  // Zoom the chart to "birth .. current age + 2 months" once there's real data to zoom
+  // around, instead of always showing the full 0-24m span — otherwise a 3-month-old's
+  // handful of points get squeezed into the far-left sliver of a 2-year axis. Defaults on;
+  // the toggle button (see zoomToggle below) lets the user compare against the full view.
+  const canZoom = hasProfile && bpts.length > 0;
+  const zoomed = canZoom && state.growthZoomed !== false;
+  const nowAgeMonths = hasProfile ? (new Date() - new Date(baby.babyBirth)) / 86400000 / 30.4375 : 24;
+  const zoomUpper = zoomed ? Math.min(24, Math.max(3, nowAgeMonths + 2)) : 24;
+  const AGES = zoomed ? Array.from({ length: 9 }, (_, i) => zoomUpper * i / 8) : [0, 3, 6, 9, 12, 15, 18, 21, 24];
+
   const GW = 320, GH = 210, mxl = 30, mxr = 14, gmt = 10, gmb = 22;
-  const sx = (age) => mxl + Math.max(0, Math.min(24, age)) / 24 * (GW - mxl - mxr);
-  const [yr0, yr1] = meta.yr;
+  const sx = (age) => mxl + Math.max(0, Math.min(zoomUpper, age)) / zoomUpper * (GW - mxl - mxr);
+
+  // Y-axis auto-zooms alongside X once there's data: covers both the recorded values and
+  // the 3rd/97th percentile reference curves within the zoomed age window (not just the
+  // raw data points), so the dashed WHO curves don't get clipped — clamped to the metric's
+  // full sane range as a safety bound, not because we expect to ever hit it.
+  let yr0, yr1;
+  if (zoomed) {
+    const sex = baby.babySex;
+    const curveVals = [];
+    AGES.forEach(a => { const v3 = whoValueAtPercentile(gm, sex, a, 3), v97 = whoValueAtPercentile(gm, sex, a, 97); if (v3 != null) curveVals.push(v3); if (v97 != null) curveVals.push(v97); });
+    const allVals = curveVals.concat(bpts.map(p => p.v));
+    const rawMin = Math.min(...allVals), rawMax = Math.max(...allVals);
+    const pad = (rawMax - rawMin) * 0.12 || 1;
+    yr0 = Math.max(meta.yr[0], rawMin - pad);
+    yr1 = Math.min(meta.yr[1], rawMax + pad);
+    if (yr1 - yr0 < 1) yr1 = yr0 + 1;
+  } else {
+    [yr0, yr1] = meta.yr;
+  }
   const sy = (v) => (GH - gmb) - (Math.max(yr0, Math.min(yr1, v)) - yr0) / (yr1 - yr0) * (GH - gmb - gmt);
+
   let gk = '';
-  for (let t = 0; t <= 4; t++) { const v = yr0 + (yr1 - yr0) * t / 4; const y = sy(v); gk += `<line x1="${mxl}" y1="${y}" x2="${GW - mxr}" y2="${y}" stroke="var(--grid)" stroke-width="1"/><text x="${mxl - 4}" y="${y + 3}" font-size="8" fill="var(--text3)" text-anchor="end">${Math.round(v)}</text>`; }
-  [0, 6, 12, 18, 24].forEach(a => gk += `<text x="${sx(a)}" y="${GH - 6}" font-size="8" fill="var(--text3)" text-anchor="middle">${a}m</text>`);
+  for (let t = 0; t <= 4; t++) { const v = yr0 + (yr1 - yr0) * t / 4; const y = sy(v); gk += `<line x1="${mxl}" y1="${y}" x2="${GW - mxr}" y2="${y}" stroke="var(--grid)" stroke-width="1"/><text x="${mxl - 4}" y="${y + 3}" font-size="8" fill="var(--text3)" text-anchor="end">${v.toFixed(zoomed ? 1 : 0)}</text>`; }
+  const xTicks = zoomed ? Array.from({ length: 5 }, (_, i) => Math.round(zoomUpper * i / 4 * 10) / 10) : [0, 6, 12, 18, 24];
+  xTicks.forEach(a => gk += `<text x="${sx(a)}" y="${GH - 6}" font-size="8" fill="var(--text3)" text-anchor="middle">${a}m</text>`);
   if (hasProfile) {
     const sex = baby.babySex;
     PCTS.forEach(p => {
       const pts = AGES.map(a => `${sx(a)},${sy(whoValueAtPercentile(gm, sex, a, p))}`).join(' ');
       const mid = p === 50;
       gk += `<polyline points="${pts}" fill="none" stroke="${mid ? 'var(--accent)' : 'var(--track)'}" stroke-width="${mid ? 2 : 1}" ${mid ? '' : 'stroke-dasharray="3 3"'}/>`;
-      gk += `<text x="${GW - mxr + 1}" y="${sy(whoValueAtPercentile(gm, sex, 24, p)) + 3}" font-size="7" fill="${mid ? 'var(--accent)' : 'var(--text3)'}">${p}</text>`;
+      gk += `<text x="${GW - mxr + 1}" y="${sy(whoValueAtPercentile(gm, sex, zoomUpper, p)) + 3}" font-size="7" fill="${mid ? 'var(--accent)' : 'var(--text3)'}">${p}</text>`;
     });
   }
-  const growth = Store.liveGrowth();
-  const bpts = growth.map(r => ({ a: hasProfile ? ageOf(r.date) : null, v: r[gm], date: r.date, id: r.id })).filter(p => p.v != null && (!hasProfile || (p.a >= 0 && p.a <= 24.5))).sort((a, b) => hasProfile ? a.a - b.a : new Date(a.date) - new Date(b.date));
   if (bpts.length) {
     const px = (p, i) => hasProfile ? sx(p.a) : (mxl + (bpts.length === 1 ? 0.5 : i / (bpts.length - 1)) * (GW - mxl - mxr));
     gk += `<polyline points="${bpts.map((p, i) => px(p, i) + ',' + sy(p.v)).join(' ')}" fill="none" stroke="#FF8C6B" stroke-width="2.5"/>`;
     bpts.forEach((p, i) => gk += `<circle cx="${px(p, i)}" cy="${sy(p.v)}" r="4" fill="#FF8C6B" stroke="var(--card)" stroke-width="1.5"/>`);
   }
   const chartSvg = `<svg viewBox="0 0 ${GW} ${GH}" style="width:100%;height:auto;overflow:visible;">${gk}</svg>`;
+  const zoomToggle = canZoom ? `<div style="text-align:center;margin-bottom:8px;"><button onclick="A.set({growthZoomed:${!zoomed}})" style="background:var(--card2);border:none;border-radius:10px;padding:6px 14px;font-size:11px;font-weight:700;color:var(--text2);">${zoomed ? '🔍 顯示完整 0-24 個月' : '🔍 縮放至目前月齡'}</button></div>` : '';
   const metricBtns = `<div class="seg" style="margin-bottom:14px;">${[['weight', '⚖️ 體重'], ['height', '📏 身高'], ['head', '🧠 頭圍']].map(([k, l]) => `<button class="${gm === k ? 'active' : ''}" onclick="A.set({growthMetric:'${k}'})">${l}</button>`).join('')}</div>`;
   const gList = growth.slice().sort((a, b) => new Date(b.date) - new Date(a.date)).map(r => `<div onclick='A.openEditGrowth(${JSON.stringify(r).replace(/'/g, "&#39;")})' style="display:flex;align-items:center;gap:8px;justify-content:space-between;padding:11px 14px;border-bottom:1px solid var(--line);cursor:pointer;"><span style="font-size:12.5px;color:var(--text2);">${esc(r.date)}</span><span style="font-size:13px;font-weight:700;color:var(--text);">⚖️ ${r.weight ?? '—'}  📏 ${r.height ?? '—'}  🧠 ${r.head ?? '—'}</span><svg width="7" height="12" viewBox="0 0 7 12" fill="none" style="flex-shrink:0;"><path d="M1 1l5 5-5 5" stroke="var(--text3)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></div>`).join('');
   const note = hasProfile ? '依 WHO LMS 對照表計算之百分位曲線（3/15/50/85/97），僅供參考、非醫療診斷' : '填寫「寶寶資料」的生日與性別後，會顯示 WHO 百分位曲線';
 
-  return metricBtns + sCard(`${meta.label} 成長曲線（${meta.unit}）`, chartSvg + `<p style="font-size:10px;color:var(--text3);margin-top:8px;text-align:center;line-height:1.4;">${note}</p>`)
+  // Latest measurement's percentile rank for whichever metric tab is currently selected —
+  // whoZScore() already backs the reference curves above, just wasn't surfaced as a number.
+  const latest = bpts.length ? bpts[bpts.length - 1] : null;
+  let pctNote = '';
+  if (hasProfile && latest) {
+    const z = whoZScore(gm, baby.babySex, latest.a, latest.v);
+    if (z) pctNote = `<p style="font-size:12.5px;font-weight:700;color:var(--text);text-align:center;margin-top:10px;">目前${meta.label}約在同齡寶寶的 <span style="color:var(--accent);">${Math.round(z.percentile)}</span> 百分位</p>`;
+  }
+
+  return metricBtns + zoomToggle + sCard(`${meta.label} 成長曲線（${meta.unit}）`, chartSvg + `<p style="font-size:10px;color:var(--text3);margin-top:8px;text-align:center;line-height:1.4;">${note}</p>${pctNote}`)
     + `<div class="card" style="overflow:hidden;">${growth.length ? gList : `<p style="font-size:13px;color:var(--text3);text-align:center;padding:24px 0;">還沒有成長記錄，點下方 ＋ 新增</p>`}</div>`;
 }
 

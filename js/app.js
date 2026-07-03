@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.9.0';
+const APP_VERSION = '2.10.0';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -23,6 +23,7 @@ const App = {
     statsPeriodOffset: 0, // 0 = current week/month/year, negative = swiped back N periods
     statsExpandedBar: null, // index of the tapped-open ml chart bar, or null
     growthMetric: 'weight',
+    growthZoomed: true, // whether the growth chart is zoomed to "birth..current age+2m" or showing the full 0-24m span
     recordsFilter: 'all',
     editingId: null,
     editBy: '',
