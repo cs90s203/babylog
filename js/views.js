@@ -780,7 +780,7 @@ function renderGrowthStats(state) {
   }
   const chartSvg = `<svg viewBox="0 0 ${GW} ${GH}" style="width:100%;height:auto;overflow:visible;">${gk}</svg>`;
   const metricBtns = `<div class="seg" style="margin-bottom:14px;">${[['weight', '⚖️ 體重'], ['height', '📏 身高'], ['head', '🧠 頭圍']].map(([k, l]) => `<button class="${gm === k ? 'active' : ''}" onclick="A.set({growthMetric:'${k}'})">${l}</button>`).join('')}</div>`;
-  const gList = growth.slice().sort((a, b) => new Date(b.date) - new Date(a.date)).map(r => `<div style="display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border-bottom:1px solid var(--line);"><span style="font-size:12.5px;color:var(--text2);">${esc(r.date)}</span><span style="font-size:13px;font-weight:700;color:var(--text);">⚖️ ${r.weight ?? '—'}  📏 ${r.height ?? '—'}  🧠 ${r.head ?? '—'}</span></div>`).join('');
+  const gList = growth.slice().sort((a, b) => new Date(b.date) - new Date(a.date)).map(r => `<div onclick='A.openEditGrowth(${JSON.stringify(r).replace(/'/g, "&#39;")})' style="display:flex;align-items:center;gap:8px;justify-content:space-between;padding:11px 14px;border-bottom:1px solid var(--line);cursor:pointer;"><span style="font-size:12.5px;color:var(--text2);">${esc(r.date)}</span><span style="font-size:13px;font-weight:700;color:var(--text);">⚖️ ${r.weight ?? '—'}  📏 ${r.height ?? '—'}  🧠 ${r.head ?? '—'}</span><svg width="7" height="12" viewBox="0 0 7 12" fill="none" style="flex-shrink:0;"><path d="M1 1l5 5-5 5" stroke="var(--text3)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></div>`).join('');
   const note = hasProfile ? '依 WHO LMS 對照表計算之百分位曲線（3/15/50/85/97），僅供參考、非醫療診斷' : '填寫「寶寶資料」的生日與性別後，會顯示 WHO 百分位曲線';
 
   return metricBtns + sCard(`${meta.label} 成長曲線（${meta.unit}）`, chartSvg + `<p style="font-size:10px;color:var(--text3);margin-top:8px;text-align:center;line-height:1.4;">${note}</p>`)
@@ -1076,10 +1076,11 @@ function renderEditRecSheet(state, reopen) {
   </div>`;
 }
 function renderGrowthSheet(state, reopen) {
+  const editing = !!state.editingGrowthId;
   return `<div class="sheet-overlay" onclick="A.closeSheet()">
     <div class="sheet" onclick="event.stopPropagation()" onpointerdown="A.startSheetDrag(event)" style="${sheetAnim(reopen)}">
       <div class="sheet-handle"></div>
-      <h2 style="font-size:23px;font-weight:800;margin-bottom:16px;color:var(--text);">記錄成長 📈</h2>
+      <h2 style="font-size:23px;font-weight:800;margin-bottom:16px;color:var(--text);">${editing ? '編輯成長紀錄' : '記錄成長'} 📈</h2>
       <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">日期</p>
       <input type="date" value="${esc(state.gDate)}" onchange="A.set({gDate:this.value})" style="margin-bottom:16px;" />
       <div style="display:flex;gap:10px;">
@@ -1088,8 +1089,9 @@ function renderGrowthSheet(state, reopen) {
         <div style="flex:1;"><p style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:6px;">🧠 頭圍 cm</p><input id="f-g-head" type="text" inputmode="decimal" value="${esc(state.gHead)}" placeholder="39" /></div>
       </div>
       <p style="font-size:10.5px;color:var(--text3);margin:10px 2px 0;">可只填部分，留空的不記。</p>
-      <button onclick="A.saveGrowth()" class="primary-btn" style="margin-top:18px;">✓ 完成記錄</button>
+      <button onclick="A.saveGrowth()" class="primary-btn" style="margin-top:18px;">✓ ${editing ? '儲存變更' : '完成記錄'}</button>
       <button onclick="A.closeSheet()" class="text-btn">取消</button>
+      ${editing ? `<button onclick="A.deleteFromGrowthEdit()" style="width:100%;background:transparent;border:none;padding:12px;font-size:14px;font-weight:700;color:#E5573D;margin-top:4px;">🗑️ 刪除這筆</button>` : ''}
     </div>
   </div>`;
 }
@@ -1108,6 +1110,23 @@ function renderDeleteConfirm(state) {
       <div style="display:flex;gap:10px;">
         <button onclick="A.cancelDelete()" style="flex:1;background:var(--card2);border:none;border-radius:14px;padding:13px;font-size:15px;font-weight:700;color:var(--text2);">取消</button>
         <button onclick="A.doDelete()" style="flex:1;background:#E5573D;border:none;border-radius:14px;padding:13px;font-size:15px;font-weight:800;color:#fff;box-shadow:0 4px 14px rgba(229,87,61,.4);">刪除</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderDeleteGrowthConfirm(state) {
+  const rec = Store.data.growth.find(g => g.id === state.confirmDelGrowthId);
+  if (!rec) return '';
+  const delText = `${esc(rec.date)} · ⚖️ ${rec.weight ?? '—'}  📏 ${rec.height ?? '—'}  🧠 ${rec.head ?? '—'}`;
+  return `<div style="position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);backdrop-filter:blur(4px);z-index:90;display:flex;align-items:center;justify-content:center;" onclick="A.cancelDeleteGrowth()">
+    <div onclick="event.stopPropagation()" style="background:var(--card);border-radius:26px;padding:26px 24px 20px;width:280px;text-align:center;box-shadow:0 24px 80px var(--shadow2);animation:pop .35s cubic-bezier(.17,.67,.32,1.2);">
+      <div style="font-size:40px;margin-bottom:8px;">📈</div>
+      <p style="font-size:16px;font-weight:800;margin-bottom:3px;color:var(--text);">刪除這筆成長紀錄？</p>
+      <p style="font-size:13px;color:var(--text2);margin-bottom:18px;">${delText}</p>
+      <div style="display:flex;gap:10px;">
+        <button onclick="A.cancelDeleteGrowth()" style="flex:1;background:var(--card2);border:none;border-radius:14px;padding:13px;font-size:15px;font-weight:700;color:var(--text2);">取消</button>
+        <button onclick="A.doDeleteGrowth()" style="flex:1;background:#E5573D;border:none;border-radius:14px;padding:13px;font-size:15px;font-weight:800;color:#fff;box-shadow:0 4px 14px rgba(229,87,61,.4);">刪除</button>
       </div>
     </div>
   </div>`;
@@ -1188,6 +1207,7 @@ function render(state) {
     ${renderNav(state)}
     ${renderSheet(state)}
     ${renderDeleteConfirm(state)}
+    ${renderDeleteGrowthConfirm(state)}
     ${renderWelcome(state)}
     ${renderToast(state)}
   </div>`;

@@ -117,6 +117,13 @@ const Store = {
     if (this._cloudPush) this._cloudPush('growth', g);
     return g;
   },
+  updateGrowth(id, patch) {
+    const i = this.data.growth.findIndex(g => g.id === id);
+    if (i === -1) return;
+    this.data.growth[i] = Object.assign({}, this.data.growth[i], patch, { updatedAt: new Date().toISOString() });
+    this.persist();
+    if (this._cloudPush) this._cloudPush('growth', this.data.growth[i]);
+  },
   deleteGrowth(id) {
     const i = this.data.growth.findIndex(g => g.id === id);
     if (i === -1) return;

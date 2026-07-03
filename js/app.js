@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.8.0';
+const APP_VERSION = '2.9.0';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -36,6 +36,8 @@ const App = {
     showWelcome: false,
     welcomeName: '',
     gDate: '', gWeight: '', gHeight: '', gHead: '',
+    editingGrowthId: null,
+    confirmDelGrowthId: null,
     exportFrom: todayStr(new Date(Date.now() - 7 * 86400000)),
     exportTo: todayStr(),
   },
@@ -408,17 +410,39 @@ const App = {
   },
 
   // ---- growth ----
-  openGrowth() { this.set({ sheet: 'growth', gDate: todayStr(), gWeight: '', gHeight: '', gHead: '' }); },
+  openGrowth() { this.set({ sheet: 'growth', editingGrowthId: null, gDate: todayStr(), gWeight: '', gHeight: '', gHead: '' }); },
+  // Same growth sheet as openGrowth(), just pre-filled and flagged as editing an existing
+  // record — saveGrowth() branches to Store.updateGrowth() instead of addGrowth() below.
+  openEditGrowth(rec) {
+    this.set({
+      sheet: 'growth', editingGrowthId: rec.id, gDate: rec.date,
+      gWeight: rec.weight ?? '', gHeight: rec.height ?? '', gHead: rec.head ?? '',
+    });
+  },
   saveGrowth() {
     // Same reasoning as closeWelcome/_editByValue: these fields have no onchange binding,
     // read straight from the DOM at submit time.
     const dv = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
     const gWeight = dv('f-g-weight'), gHeight = dv('f-g-height'), gHead = dv('f-g-head');
-    if (!gWeight && !gHeight && !gHead) { this.set({ sheet: null }); return; }
+    if (!gWeight && !gHeight && !gHead) { this.set({ sheet: null, editingGrowthId: null }); return; }
     const f = (x) => { const n = parseFloat(x); return isNaN(n) ? null : n; };
-    Store.addGrowth({ date: this.state.gDate, weight: f(gWeight), height: f(gHeight), head: f(gHead) });
-    this.set({ sheet: null });
-    this.toast('📈', '成長記錄了！');
+    const patch = { date: this.state.gDate, weight: f(gWeight), height: f(gHeight), head: f(gHead) };
+    if (this.state.editingGrowthId) {
+      Store.updateGrowth(this.state.editingGrowthId, patch);
+      this.toast('✏️', '已更新');
+    } else {
+      Store.addGrowth(patch);
+      this.toast('📈', '成長記錄了！');
+    }
+    this.set({ sheet: null, editingGrowthId: null });
+  },
+  deleteFromGrowthEdit() { this.set({ sheet: null, confirmDelGrowthId: this.state.editingGrowthId, editingGrowthId: null }); },
+  cancelDeleteGrowth() { this.set({ confirmDelGrowthId: null }); },
+  doDeleteGrowth() {
+    const id = this.state.confirmDelGrowthId;
+    Store.deleteGrowth(id);
+    this.set({ confirmDelGrowthId: null });
+    this.toast('🗑️', '已刪除');
   },
 
   // ---- welcome ----
