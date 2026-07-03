@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.12.0';
+const APP_VERSION = '2.13.0';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -126,11 +126,13 @@ const App = {
   },
   setTheme(t) { Store.local('theme', t); this.set({ theme: t }); },
 
-  // ---- quick record (poop/pee tap & long-press) ----
+  // ---- quick record (poop/pee/brush tap & long-press) ----
   recordNow(type) {
     Store.addEvent(type, new Date());
-    const map = { poop: ['💩', '排便記錄了！'], pee: ['💧', '尿尿記錄了！'] };
-    const other = type === 'poop' ? 'pee' : 'poop';
+    const map = { poop: ['💩', '排便記錄了！'], pee: ['💧', '尿尿記錄了！'], brush: ['🪥', '刷牙記錄了！'] };
+    // The "also add the other one" toast shortcut only makes sense for poop/pee (same
+    // diaper change often has both) — brushing has no such pairing.
+    const other = type === 'poop' ? 'pee' : type === 'pee' ? 'poop' : null;
     const ev = Store.data.events[Store.data.events.length - 1];
     this.toast(map[type][0], map[type][1], other, ev.id);
   },
@@ -271,8 +273,8 @@ const App = {
     } else {
       Store.addEvent(type, t);
       const ev = Store.data.events[Store.data.events.length - 1];
-      const other = type === 'poop' ? 'pee' : 'poop';
-      const map = { poop: ['💩', '排便記錄了！'], pee: ['💧', '尿尿記錄了！'] };
+      const other = type === 'poop' ? 'pee' : type === 'pee' ? 'poop' : null;
+      const map = { poop: ['💩', '排便記錄了！'], pee: ['💧', '尿尿記錄了！'], brush: ['🪥', '刷牙記錄了！'] };
       this.set({ sheet: null });
       this.toast(map[type][0], map[type][1], other, ev.id);
     }

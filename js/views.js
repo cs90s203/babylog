@@ -12,9 +12,9 @@ function hm(date) {
 function fracOf(date) { return date.getHours() + date.getMinutes() / 60; }
 
 function milkColorOf(ev) { return (ev.breastMl > 0 && ev.formulaMl > 0) ? '#C77D52' : ((ev.formulaMl > 0) ? '#E8A33D' : '#FF8C6B'); }
-function dotColor(ev) { return ev.type === 'milk' ? milkColorOf(ev) : ev.type === 'poop' ? '#C8965A' : '#79C3F0'; }
-function tintBg(ev) { return ev.type === 'milk' ? ((ev.breastMl > 0 && ev.formulaMl > 0) ? 'var(--tMix)' : (ev.formulaMl > 0 ? 'var(--tMilkF)' : 'var(--tMilkB)')) : ev.type === 'poop' ? 'var(--tPoop)' : 'var(--tPee)'; }
-function emojiOf(t) { return t === 'milk' ? '🍼' : t === 'poop' ? '💩' : '💧'; }
+function dotColor(ev) { return ev.type === 'milk' ? milkColorOf(ev) : ev.type === 'poop' ? '#C8965A' : ev.type === 'brush' ? '#5BBFA0' : '#79C3F0'; }
+function tintBg(ev) { return ev.type === 'milk' ? ((ev.breastMl > 0 && ev.formulaMl > 0) ? 'var(--tMix)' : (ev.formulaMl > 0 ? 'var(--tMilkF)' : 'var(--tMilkB)')) : ev.type === 'poop' ? 'var(--tPoop)' : ev.type === 'brush' ? 'var(--tBrush)' : 'var(--tPee)'; }
+function emojiOf(t) { return t === 'milk' ? '🍼' : t === 'poop' ? '💩' : t === 'brush' ? '🪥' : '💧'; }
 // Baby profile avatar — a photo (compressed thumbnail, see App.handleAvatarFile) takes
 // precedence over the emoji when both are set. Tapping the circle opens the picker sheet.
 function babyAvatarInner(s, sizePx) {
@@ -54,21 +54,24 @@ function backIcon() { return `<svg width="9" height="15" viewBox="0 0 9 15" fill
 function pawButtons() {
   // R/spreadDeg tuned so adjacent buttons' chord distance clears their combined diameter
   // (with a few px to spare) instead of overlapping, while staying inside the horizontal
-  // gap to the home/stats/records/config icons on either side.
-  const R = 50, spreadDeg = 96, size = Math.round(32 * 1.15);
+  // gap to the home/stats/records/config icons on either side. Evenly-spaced angles across
+  // an even count of buttons already gives equal chord spacing between every adjacent
+  // pair — no per-button nudging needed (unlike the old 3-button version, which special
+  // cased the two side buttons since one button always sat dead-center at 0°).
+  const R = 54, spreadDeg = 132, size = 30, dropPx = 23;
   const items = [
     { emoji: '🍼', bg: '#FCD0A1', shadow: 'rgba(252,208,161,.55)', attrs: `onclick="A.openMilk()"` },
     { emoji: '💩', bg: '#995D81', shadow: 'rgba(153,93,129,.4)', attrs: `onclick="A.tap('poop')" onpointerdown="A.startPress('poop')" onpointerup="A.endPress()" onpointerleave="A.endPress()"` },
     { emoji: '💧', bg: '#9BB1FF', shadow: 'rgba(155,177,255,.5)', attrs: `onclick="A.tap('pee')" onpointerdown="A.startPress('pee')" onpointerup="A.endPress()" onpointerleave="A.endPress()"` },
+    { emoji: '🪥', bg: '#9FE0D0', shadow: 'rgba(159,224,208,.5)', attrs: `onclick="A.tap('brush')" onpointerdown="A.startPress('brush')" onpointerup="A.endPress()" onpointerleave="A.endPress()"` },
   ];
-  const n = items.length, dropPx = 15, sideOutPx = 5;
+  const n = items.length;
   return items.map((it, i) => {
     const angleDeg = -spreadDeg / 2 + (spreadDeg * i / (n - 1));
     const rad = angleDeg * Math.PI / 180;
-    let dx = R * Math.sin(rad);
+    const dx = R * Math.sin(rad);
     const dy = -R * Math.cos(rad) + dropPx;
-    if (dx !== 0) dx += Math.sign(dx) * sideOutPx; // push the left/right buttons further out, middle stays centered
-    return `<button ${it.attrs} style="position:absolute;left:calc(50% + ${dx.toFixed(1)}px - ${size / 2}px);top:${(dy - size / 2).toFixed(1)}px;width:${size}px;height:${size}px;border-radius:50%;border:none;background:${it.bg};box-shadow:0 3px 10px ${it.shadow};display:flex;align-items:center;justify-content:center;font-size:17px;z-index:5;">${it.emoji}</button>`;
+    return `<button ${it.attrs} style="position:absolute;left:calc(50% + ${dx.toFixed(1)}px - ${size / 2}px);top:${(dy - size / 2).toFixed(1)}px;width:${size}px;height:${size}px;border-radius:50%;border:none;background:${it.bg};box-shadow:0 3px 10px ${it.shadow};display:flex;align-items:center;justify-content:center;font-size:15px;z-index:5;">${it.emoji}</button>`;
   }).join('');
 }
 function renderNav(state) {
@@ -423,7 +426,11 @@ function renderTodayTimeline(state) {
       const amt = mix ? (r.breastMl + '+' + r.formulaMl + 'ml') : ((r.formulaMl > 0 ? r.formulaMl : r.breastMl) + 'ml');
       kids += `<span style="color:${milkColorOf(r)};">${amt}</span>`;
       if (!compact) { const tag = mix ? '混合' : (r.formulaMl > 0 ? '配方乳' : '母乳'); kids += `<span style="font-size:10px;font-weight:700;color:${milkColorOf(r)};">${tag}</span>`; }
-    } else kids += `<span>${compact ? (r.type === 'poop' ? '便' : '尿') : (r.type === 'poop' ? '排便' : '尿尿')}</span>`;
+    } else {
+      const full = { poop: '排便', pee: '尿尿', brush: '刷牙' }[r.type];
+      const short = { poop: '便', pee: '尿', brush: '牙' }[r.type];
+      kids += `<span>${compact ? short : full}</span>`;
+    }
     // Brief glow instead of a toast popup — fires both when a press-and-hold activates a
     // drag (confirms "you've grabbed this one") and when the drag commits (see
     // App.startDrag/dragEnd). state.justUpdatedId is cleared again ~900ms later.
@@ -461,7 +468,7 @@ function renderTodayTimeline(state) {
       <div id="dtl" style="position:absolute;left:${HOURW}px;width:${axisX - HOURW - 8}px;text-align:right;top:${y - 8}px;font-size:12px;font-weight:800;color:var(--accent);z-index:8;">${hm(dateOfPos(dragEv.h))}</div>
       <div id="drow" style="position:absolute;left:${axisX + 14}px;right:4px;top:${y - half}px;display:flex;align-items:center;gap:6px;z-index:8;">${chip(dragEv, true)}</div>`;
   }
-  const legend = [['#FF8C6B', '母乳'], ['#E8A33D', '配方'], ['#C77D52', '混合'], ['#C8965A', '排便'], ['#79C3F0', '尿尿']]
+  const legend = [['#FF8C6B', '母乳'], ['#E8A33D', '配方'], ['#C77D52', '混合'], ['#C8965A', '排便'], ['#79C3F0', '尿尿'], ['#5BBFA0', '刷牙']]
     .map(([c, l]) => `<div style="display:flex;align-items:center;gap:4px;"><div style="width:9px;height:9px;border-radius:50%;background:${c};"></div><span style="font-size:11px;color:var(--text2);">${l}</span></div>`).join('');
 
   return `<div>
@@ -845,11 +852,11 @@ function renderStats(state) {
 function renderRecords(state) {
   const filter = state.recordsFilter;
   const evs = Store.liveEvents().filter(e => filter === 'all' || e.type === filter).sort((a, b) => new Date(b.time) - new Date(a.time));
-  const chips = `<div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">${[['all', '全部'], ['milk', '🍼 喝奶'], ['poop', '💩 排便'], ['pee', '💧 尿尿']].map(([k, l]) => `<button onclick="A.set({recordsFilter:'${k}'})" style="padding:8px 14px;border:none;border-radius:12px;font-size:12.5px;font-weight:700;font-family:inherit;background:${filter === k ? 'var(--accent)' : 'var(--card2)'};color:${filter === k ? '#fff' : 'var(--text2)'};">${l}</button>`).join('')}</div>`;
+  const chips = `<div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">${[['all', '全部'], ['milk', '🍼 喝奶'], ['poop', '💩 排便'], ['pee', '💧 尿尿'], ['brush', '🪥 刷牙']].map(([k, l]) => `<button onclick="A.set({recordsFilter:'${k}'})" style="padding:8px 14px;border:none;border-radius:12px;font-size:12.5px;font-weight:700;font-family:inherit;background:${filter === k ? 'var(--accent)' : 'var(--card2)'};color:${filter === k ? '#fff' : 'var(--text2)'};">${l}</button>`).join('')}</div>`;
   const row = (r) => {
     let label;
     if (r.type === 'milk') { const mix = r.breastMl > 0 && r.formulaMl > 0; label = '喝奶 ' + (mix ? (r.breastMl + '+' + r.formulaMl + 'ml ・混合') : ((r.amountMl || 0) + 'ml ・' + (r.formulaMl > 0 ? '配方乳' : '母乳'))); }
-    else label = r.type === 'poop' ? '排便' : '尿尿';
+    else label = { poop: '排便', pee: '尿尿', brush: '刷牙' }[r.type];
     const d = new Date(r.time);
     return `<div onclick='A.openEditRec(${JSON.stringify(r).replace(/'/g, "&#39;")})' style="display:flex;align-items:center;gap:12px;padding:13px 14px;border-bottom:1px solid var(--line);cursor:pointer;">
       <div style="width:40px;height:40px;border-radius:13px;background:${tintBg(r)};display:flex;align-items:center;justify-content:center;font-size:19px;flex-shrink:0;">${emojiOf(r.type)}</div>
@@ -1078,7 +1085,7 @@ function renderMilkSheet(state, reopen) {
   </div>`;
 }
 function renderEditSheet(state, reopen) {
-  const label = state.recordType === 'poop' ? '排便 💩' : '尿尿 💧';
+  const label = { poop: '排便 💩', brush: '刷牙 🪥' }[state.recordType] || '尿尿 💧';
   return `<div class="sheet-overlay" onclick="A.closeSheet()">
     <div class="sheet" onclick="event.stopPropagation()" onpointerdown="A.startSheetDrag(event)" style="${sheetAnim(reopen)}">
       <div class="sheet-handle"></div>
@@ -1093,7 +1100,9 @@ function renderEditSheet(state, reopen) {
 }
 function renderEditRecSheet(state, reopen) {
   const isMilk = state.recordType === 'milk';
-  const isDiaper = !isMilk;
+  // Brush is neither milk nor a poop/pee pairable "diaper" event — it just gets the plain
+  // time+by fields below, no type-switch toggle or "also add the other one" shortcut.
+  const isDiaper = state.recordType === 'poop' || state.recordType === 'pee';
   const typeSeg = isDiaper ? `<p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin:16px 0 8px;">類型</p>
     <div style="display:flex;background:var(--card2);border-radius:18px;padding:4px;margin-bottom:12px;">
       <button onclick="A.setEditType('poop')" style="flex:1;padding:10px;border-radius:14px;border:none;font-size:14px;font-weight:${state.recordType === 'poop' ? 700 : 600};background:${state.recordType === 'poop' ? 'var(--card)' : 'transparent'};color:${state.recordType === 'poop' ? 'var(--text)' : 'var(--text2)'};box-shadow:${state.recordType === 'poop' ? '0 2px 8px var(--shadow)' : 'none'};">💩 排便</button>
