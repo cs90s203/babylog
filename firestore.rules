@@ -1,7 +1,7 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function isAllowed() {
+    function isDefaultFamily() {
       return request.auth != null &&
         request.auth.token.email in [
           'cs90s203@gmail.com',
@@ -9,11 +9,24 @@ service cloud.firestore {
           'lunamamahappy@gmail.com'
         ];
     }
+    function isFriendAFamily() {
+      return request.auth != null &&
+        request.auth.token.email in [
+          'phoebe790322@gmail.com',
+          'jumptoohigh@gmail.com'
+        ];
+    }
 
-    // Single-family app: everything lives under families/default.
-    // Only the whitelisted caregiver emails above can read or write any of it.
+    // Multi-family app: each family lives under its own families/{id} path, with its own
+    // email whitelist below — these lists must stay in sync with FAMILIES in
+    // js/firebase-sync.js. A family's members can only read/write their own path; there's
+    // no rule granting cross-family access, so families/default and families/friendA (etc)
+    // are fully isolated from each other.
     match /families/default/{document=**} {
-      allow read, write: if isAllowed();
+      allow read, write: if isDefaultFamily();
+    }
+    match /families/friendA/{document=**} {
+      allow read, write: if isFriendAFamily();
     }
 
     // Deny everything else by default.

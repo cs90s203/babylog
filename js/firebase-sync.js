@@ -13,11 +13,29 @@ const firebaseConfig = {
 };
 
 // Server-side enforcement lives in Firestore Security Rules (see docs/sync.md) — this
-// client-side list is just so the UI can show a clear "not authorized" message instead
-// of a cryptic permission-denied error after a stranger's Google account signs in.
-const ALLOWED_EMAILS = ["cs90s203@gmail.com", "snowy5420@gmail.com", "lunamamahappy@gmail.com"];
+// client-side map is just so the UI can show a clear "not authorized" message instead of
+// a cryptic permission-denied error, and so the app knows which family's data to load.
+// Each family is a fully separate Firestore path (families/{id}/...) with its own email
+// list, so different families' data never mixes. Adding a new family (e.g. a friend's own
+// baby) means adding one entry here AND mirroring the same email list in
+// firestore.rules — that file is the actual security boundary, not this one (this object
+// being visible in the client bundle isn't a leak in itself).
+// CAVEAT: local data (localStorage['bt_data']) is NOT namespaced per family — this assumes
+// each device only ever signs in as one family's members. If a shared/borrowed device ever
+// signed into two different families' accounts, cached local records could get pushed to
+// the wrong family on the next sign-in. Fine for "a couple of families, each on their own
+// devices"; would need per-family local storage keys to be fully safe against that.
+const FAMILIES = {
+  default: ["cs90s203@gmail.com", "snowy5420@gmail.com", "lunamamahappy@gmail.com"],
+  friendA: ["phoebe790322@gmail.com", "jumptoohigh@gmail.com"],
+};
+function familyIdForEmail(email) {
+  for (const id in FAMILIES) if (FAMILIES[id].includes(email)) return id;
+  return null;
+}
 
-const FAMILY_PATH = "families/default"; // single-family app; see docs/data-model.md
+let currentFamilyId = null; // set once signed in, see familyIdForEmail()
+function familyPath() { return `families/${currentFamilyId}`; }
 
 let fbApp = null, fbAuth = null, fbDb = null;
 let firebaseInitError = null;
@@ -48,19 +66,23 @@ const Sync = {
 
       fbAuth.onAuthStateChanged((user) => {
         authStateKnown = true;
-        if (user && !ALLOWED_EMAILS.includes(user.email)) {
+        const famId = user ? familyIdForEmail(user.email) : null;
+        if (user && !famId) {
           this._set("unauthorized", "此 Google 帳號未被授權使用");
           fbAuth.signOut();
           this.user = null;
+          currentFamilyId = null;
           this._detachListeners();
           return;
         }
+        currentFamilyId = famId;
         this.user = user ? { email: user.email, displayName: user.displayName, photoURL: user.photoURL } : null;
         if (user) {
           this._pushAllLocal();
           this._attachListeners();
           this._set("syncing");
         } else {
+          currentFamilyId = null;
           this._detachListeners();
           this._set("idle");
         }
@@ -101,9 +123,9 @@ const Sync = {
     if (!fbDb || !Store.data) return;
     const batch = fbDb.batch();
     let n = 0;
-    Store.data.events.forEach((ev) => { batch.set(fbDb.doc(`${FAMILY_PATH}/events/${ev.id}`), ev, { merge: true }); n++; });
-    Store.data.growth.forEach((g) => { batch.set(fbDb.doc(`${FAMILY_PATH}/growth/${g.id}`), g, { merge: true }); n++; });
-    if (Store.data.settings) { batch.set(fbDb.doc(`${FAMILY_PATH}/settings/main`), Store.data.settings, { merge: true }); n++; }
+    Store.data.events.forEach((ev) => { batch.set(fbDb.doc(`${familyPath()}/events/${ev.id}`), ev, { merge: true }); n++; });
+    Store.data.growth.forEach((g) => { batch.set(fbDb.doc(`${familyPath()}/growth/${g.id}`), g, { merge: true }); n++; });
+    if (Store.data.settings) { batch.set(fbDb.doc(`${familyPath()}/settings/main`), Store.data.settings, { merge: true }); n++; }
     if (n === 0) return;
     batch.commit().catch((err) => console.error("initial catch-up push failed:", err));
   },
@@ -114,15 +136,15 @@ const Sync = {
     let pending = 3;
     const settled = () => { pending--; if (pending <= 0) { this._set("done"); Store.local("last_sync", this._nowLabel()); } };
 
-    unsubEvents = fbDb.collection(`${FAMILY_PATH}/events`).onSnapshot(
+    unsubEvents = fbDb.collection(`${familyPath()}/events`).onSnapshot(
       (snap) => { snap.docChanges().forEach((c) => Store.mergeRemote("events", { id: c.doc.id, ...c.doc.data() })); settled(); },
       (err) => this._onListenerError(err)
     );
-    unsubGrowth = fbDb.collection(`${FAMILY_PATH}/growth`).onSnapshot(
+    unsubGrowth = fbDb.collection(`${familyPath()}/growth`).onSnapshot(
       (snap) => { snap.docChanges().forEach((c) => Store.mergeRemote("growth", { id: c.doc.id, ...c.doc.data() })); settled(); },
       (err) => this._onListenerError(err)
     );
-    unsubSettings = fbDb.doc(`${FAMILY_PATH}/settings/main`).onSnapshot(
+    unsubSettings = fbDb.doc(`${familyPath()}/settings/main`).onSnapshot(
       (doc) => { if (doc.exists) Store.mergeRemoteSettings(doc.data()); settled(); },
       (err) => this._onListenerError(err)
     );
@@ -145,13 +167,13 @@ const Sync = {
   // ---- local -> cloud pushes (wired up as Store._cloudPush, see store.js) ----
   pushDoc(kind, doc) {
     if (!this.isSignedIn() || !fbDb) return;
-    fbDb.doc(`${FAMILY_PATH}/${kind}/${doc.id}`).set(doc, { merge: true }).catch((err) => {
+    fbDb.doc(`${familyPath()}/${kind}/${doc.id}`).set(doc, { merge: true }).catch((err) => {
       console.error("cloud push failed:", err);
     });
   },
   pushSettings(settings) {
     if (!this.isSignedIn() || !fbDb) return;
-    fbDb.doc(`${FAMILY_PATH}/settings/main`).set(settings, { merge: true }).catch((err) => {
+    fbDb.doc(`${familyPath()}/settings/main`).set(settings, { merge: true }).catch((err) => {
       console.error("cloud push (settings) failed:", err);
     });
   },

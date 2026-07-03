@@ -3,6 +3,30 @@
 版號規則跟 JPL（日語學習 App）主 dev 對話一致：`MAJOR.MINOR.PATCH`——新功能升 MINOR、
 架構級的重大改動升 MAJOR、bug 修正/小改善升 PATCH。版本號顯示在設定頁最下方。
 
+## v2.8.0 — 2026-07-03
+
+**新功能：支援多家庭，朋友的寶寶資料完全獨立**
+
+- 從單一家庭資料庫改成「email → 家庭代號」自動路由：`js/firebase-sync.js` 的 `FAMILIES`
+  對照表決定每個 Google 帳號屬於哪個家庭，登入後自動讀寫對應的 `families/{id}` 路徑，
+  彼此資料完全分開、互不可見。新增了 `families/friendA`，白名單是
+  `phoebe790322@gmail.com`、`jumptoohigh@gmail.com`。
+- `firestore.rules` 同步改成每個家庭各自一條規則、各自的 email 名單，`families/default`
+  跟 `families/friendA` 之間沒有任何互相存取的規則，安全邊界在 Firestore 規則層，不是
+  只靠前端判斷。
+- 朋友那邊完全不用學新東西：一樣是「使用 Google 帳號登入」，登入後系統自動導去屬於他們
+  的獨立資料空間，感覺不到背後其實是同一個網站在服務兩個家庭。
+- 已知限制：本機快取（`localStorage`）沒有依家庭分開存放，這個設計假設每支裝置只會登入
+  屬於同一個家庭的帳號——如果同一支裝置先後登入過不同家庭的帳號，快取的本機資料可能在下次
+  登入時被推到錯的家庭。日常使用（各自用自己的手機）不會碰到，但如果之後要支援「同一支
+  裝置切換不同家庭」，需要另外把本機快取也依家庭分開存。
+- 驗證：`familyIdForEmail()` 對兩個家庭的 email 分別正確對應到 `default`／`friendA`，
+  不在白名單的 email 正確回傳 null（會被導向「未授權」畫面）。
+
+**⚠️ 需要手動操作**：這次的 Firestore 安全規則有改動，麻煩到 Firebase 主控台
+**Firestore Database → Rules**，把 [firestore.rules](firestore.rules) 最新內容整份貼上
+存檔，朋友才能真正登入成功。
+
 ## v2.7.0 — 2026-07-03
 
 **新功能：統計頁圖表可左右滑動切換週/月/年、顯示日期、點擊展開奶量細節**
