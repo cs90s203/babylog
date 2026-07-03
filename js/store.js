@@ -73,10 +73,30 @@ const Store = {
     try { localStorage.setItem(k, val); } catch (e) {}
   },
 
+  // Renaming "我是…" (e.g. fixing a typo) used to only affect *future* records — every
+  // past event kept whatever name was baked into its `by` field at creation time (a
+  // deliberate snapshot, see addEvent below), so the stats page's caregiver breakdown
+  // would show the old and new names as two different people. Now a rename walks back
+  // over every existing event tagged with the old name and relabels it too.
   setCaregiver(name) {
+    const oldName = this.caregiver;
     this.caregiver = name;
     try { localStorage.setItem(CAREGIVER_KEY, name); } catch (e) {}
-    this._emit();
+    if (oldName && oldName !== name) this._renameCaregiverInEvents(oldName, name);
+    else this._emit();
+  },
+  _renameCaregiverInEvents(oldName, newName) {
+    const now = new Date().toISOString();
+    let changed = false;
+    this.data.events.forEach(ev => {
+      if (!ev.deleted && ev.by === oldName) {
+        ev.by = newName;
+        ev.updatedAt = now;
+        changed = true;
+        if (this._cloudPush) this._cloudPush('events', ev);
+      }
+    });
+    if (changed) this.persist(); else this._emit();
   },
 
   // ---- events (milk/poop/pee) ----
