@@ -1139,9 +1139,9 @@ function renderGrowthSheet(state, reopen) {
       <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">日期</p>
       <input type="date" value="${esc(state.gDate)}" onchange="A.set({gDate:this.value})" style="margin-bottom:16px;" />
       <div style="display:flex;gap:10px;">
-        <div style="flex:1;"><p style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:6px;">⚖️ 體重 kg</p><input id="f-g-weight" type="text" inputmode="decimal" value="${esc(state.gWeight)}" placeholder="5.4" /></div>
-        <div style="flex:1;"><p style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:6px;">📏 身高 cm</p><input id="f-g-height" type="text" inputmode="decimal" value="${esc(state.gHeight)}" placeholder="58" /></div>
-        <div style="flex:1;"><p style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:6px;">🧠 頭圍 cm</p><input id="f-g-head" type="text" inputmode="decimal" value="${esc(state.gHead)}" placeholder="39" /></div>
+        <div style="flex:1;"><p style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:6px;">⚖️ 體重 kg</p><input id="f-g-weight" type="text" inputmode="decimal" value="${esc(state.gWeight)}" placeholder="5.4" onblur="A.resetZoom()" /></div>
+        <div style="flex:1;"><p style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:6px;">📏 身高 cm</p><input id="f-g-height" type="text" inputmode="decimal" value="${esc(state.gHeight)}" placeholder="58" onblur="A.resetZoom()" /></div>
+        <div style="flex:1;"><p style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:6px;">🧠 頭圍 cm</p><input id="f-g-head" type="text" inputmode="decimal" value="${esc(state.gHead)}" placeholder="39" onblur="A.resetZoom()" /></div>
       </div>
       <p style="font-size:10.5px;color:var(--text3);margin:10px 2px 0;">可只填部分，留空的不記。</p>
       <button onclick="A.saveGrowth()" class="primary-btn" style="margin-top:18px;">✓ ${editing ? '儲存變更' : '完成記錄'}</button>
