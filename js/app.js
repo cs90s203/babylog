@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.6.0';
+const APP_VERSION = '2.7.0';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -20,6 +20,8 @@ const App = {
     scale: 'today',
     statsTab: 'feed',
     statsRange: 'week',
+    statsPeriodOffset: 0, // 0 = current week/month/year, negative = swiped back N periods
+    statsExpandedBar: null, // index of the tapped-open ml chart bar, or null
     growthMetric: 'weight',
     recordsFilter: 'all',
     editingId: null,
@@ -51,6 +53,7 @@ const App = {
   _holdInterval: null,
   _sheetDrag: null,
   _glowTimer: null,
+  _statsSwipe: null,
 
   init() {
     Store.init();
@@ -94,6 +97,24 @@ const App = {
   goRecords() { this.set({ screen: 'records', sheet: null }); },
   goConfig() { this.set({ screen: 'config', sheet: null }); },
   closeSheet() { this.set({ sheet: null }); },
+
+  // ---- stats: period switching + swipe navigation + tap-to-expand ml bar ----
+  setStatsRange(range) { this.set({ statsRange: range, statsPeriodOffset: 0, statsExpandedBar: null }); },
+  toggleMlBar(i) { this.set({ statsExpandedBar: this.state.statsExpandedBar === i ? null : i }); },
+  // Swipe left = further back in time, swipe right = toward the present (same convention
+  // as e.g. Apple Health's weekly charts). Clamped so you can't swipe past "now" or past
+  // the earliest period that actually has any records (see minStatsOffset, views.js).
+  startStatsSwipe(clientX) { this._statsSwipe = { startX: clientX }; },
+  endStatsSwipe(clientX) {
+    const s = this._statsSwipe; this._statsSwipe = null;
+    if (!s) return;
+    const dx = clientX - s.startX;
+    if (Math.abs(dx) < 40) return;
+    const range = this.state.statsRange;
+    const dir = dx < 0 ? -1 : 1;
+    const next = Math.max(minStatsOffset(range), Math.min(0, this.state.statsPeriodOffset + dir));
+    if (next !== this.state.statsPeriodOffset) this.set({ statsPeriodOffset: next, statsExpandedBar: null });
+  },
 
   toggleTheme() {
     const sysDark = !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);

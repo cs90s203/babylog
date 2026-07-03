@@ -543,15 +543,60 @@ function themeIcon(state) {
 function sCard(title, child) {
   return `<div class="card" style="padding:16px 16px 14px;margin-bottom:14px;"><p style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:14px;">${title}</p>${child}</div>`;
 }
-function rangeBounds(range) {
+// offset: 0 = current period, -1 = one period back, etc. Past periods run through their
+// natural end (Sunday/end-of-month/end-of-year); the current period (offset 0) still caps
+// at "now" so it doesn't show future dates.
+function rangeBounds(range, offset = 0) {
   const now = new Date();
-  if (range === 'week') { const dow = (now.getDay() + 6) % 7; const s = new Date(now); s.setDate(now.getDate() - dow); s.setHours(0, 0, 0, 0); return [s, now]; }
-  if (range === 'month') { return [new Date(now.getFullYear(), now.getMonth(), 1), now]; }
-  return [new Date(now.getFullYear(), 0, 1), now];
+  if (range === 'week') {
+    const dow = (now.getDay() + 6) % 7;
+    const s = new Date(now); s.setDate(now.getDate() - dow + offset * 7); s.setHours(0, 0, 0, 0);
+    const e = new Date(s); e.setDate(s.getDate() + 6); e.setHours(23, 59, 59, 999);
+    return [s, offset === 0 ? now : e];
+  }
+  if (range === 'month') {
+    const s = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+    const e = new Date(s.getFullYear(), s.getMonth() + 1, 0, 23, 59, 59, 999);
+    return [s, offset === 0 ? now : e];
+  }
+  const s = new Date(now.getFullYear() + offset, 0, 1);
+  const e = new Date(s.getFullYear(), 11, 31, 23, 59, 59, 999);
+  return [s, offset === 0 ? now : e];
+}
+// How far back (most negative offset) you can swipe before hitting the earliest record —
+// walks backward one period at a time since periods have irregular lengths (months/years).
+function minStatsOffset(range) {
+  const all = Store.liveEvents();
+  if (!all.length) return 0;
+  const earliest = Math.min(...all.map(e => new Date(e.time).getTime()));
+  let offset = 0;
+  while (rangeBounds(range, offset)[0].getTime() > earliest) offset--;
+  return offset;
+}
+// "標題下方顯示月份" — a single shared subtitle above the swipeable charts showing which
+// week/month/year is currently in view.
+function statsPeriodLabel(range, offset) {
+  const [s, e] = rangeBounds(range, offset);
+  if (range === 'week') {
+    const wd = ['日', '一', '二', '三', '四', '五', '六'];
+    const eEnd = new Date(s); eEnd.setDate(s.getDate() + 6);
+    return `${s.getMonth() + 1}/${s.getDate()}（${wd[s.getDay()]}）－${eEnd.getMonth() + 1}/${eEnd.getDate()}（${wd[eEnd.getDay()]}）`;
+  }
+  if (range === 'month') return `${s.getFullYear()}年${s.getMonth() + 1}月`;
+  return `${s.getFullYear()}年`;
+}
+// Date sub-label for bucket i within the current period — used under the weekday labels in
+// week mode, and to name a bucket when its bar is tapped open (see toggleMlBar).
+function statsBucketLabel(range, offset, i) {
+  const [s] = rangeBounds(range, offset);
+  if (range === 'week') { const d = new Date(s); d.setDate(s.getDate() + i); return `${d.getMonth() + 1}/${d.getDate()}`; }
+  if (range === 'month') { const w0 = new Date(s); w0.setDate(s.getDate() + i * 7); const w1 = new Date(w0); w1.setDate(w0.getDate() + 6); return `${w0.getMonth() + 1}/${w0.getDate()}–${w1.getMonth() + 1}/${w1.getDate()}`; }
+  return `${i + 1}月`;
 }
 function renderFeedStats(state) {
   const range = state.statsRange;
-  const [from, to] = rangeBounds(range);
+  const offset = state.statsPeriodOffset || 0;
+  const [from, to] = rangeBounds(range, offset);
   const evs = Store.liveEvents().filter(e => { const t = new Date(e.time); return t >= from && t <= to; });
   const milks = evs.filter(e => e.type === 'milk');
   const totalMl = milks.reduce((s, e) => s + (e.amountMl || 0), 0);
@@ -576,7 +621,8 @@ function renderFeedStats(state) {
     if (n > 0) { const avgMin = totalMin / n; avgIntervalLabel = `${Math.floor(avgMin / 60)}h${Math.round(avgMin % 60)}m`; }
   }
 
-  const rangeTabs = `<div class="seg" style="margin-bottom:14px;">${[['week', '本週'], ['month', '本月'], ['year', '本年']].map(([k, l]) => `<button class="${state.statsRange === k ? 'active' : ''}" onclick="A.set({statsRange:'${k}'})">${l}</button>`).join('')}</div>`;
+  const rangeTabs = `<div class="seg" style="margin-bottom:6px;">${[['week', '本週'], ['month', '本月'], ['year', '本年']].map(([k, l]) => `<button class="${state.statsRange === k ? 'active' : ''}" onclick="A.setStatsRange('${k}')">${l}</button>`).join('')}</div>
+    <p style="text-align:center;font-size:12px;color:var(--text2);font-weight:600;margin-bottom:14px;">${esc(statsPeriodLabel(range, offset))}</p>`;
   const sStat = (val, lbl) => `<div style="flex:1;text-align:center;"><p style="font-size:17px;font-weight:800;color:var(--text);line-height:1;">${val}</p><p style="font-size:9.5px;color:var(--text2);font-weight:600;margin-top:3px;">${lbl}</p></div>`;
   const div = `<div style="width:1px;background:var(--line);margin:0 2px;"></div>`;
   const summary = `<div class="card" style="display:flex;padding:16px 6px;margin-bottom:14px;">${sStat(avgMl, '平均奶量/日')}${div}${sStat(avgIntervalLabel, '平均間隔(不含夜間)')}${div}${sStat(poopCount, '排便次數')}${div}${sStat(peeCount, '尿尿次數')}</div>`;
@@ -590,17 +636,34 @@ function renderFeedStats(state) {
     <div style="height:8px;border-radius:4px;background:var(--card2);overflow:hidden;"><div style="width:${r.total / rkMax * 100}%;height:100%;border-radius:4px;background:${i === 0 ? 'linear-gradient(90deg,#F0A500,#FF8C6B)' : 'var(--track)'};"></div></div></div>`).join('');
   const caregiverCard = sCard('照顧者分擔 💛', ranking.length ? (cgRows + `<p style="font-size:11px;color:var(--text3);margin-top:12px;text-align:center;">謝謝大家一起照顧寶寶 🌿</p>`) : `<p style="font-size:13px;color:var(--text3);text-align:center;padding:20px 0;">還沒有記錄</p>`);
 
+  // "星期標籤底下顯示日期" — only meaningful for week mode, where each bucket really is a
+  // single calendar day; month/year buckets are weeks/months so a day number wouldn't mean
+  // anything there (the shared statsPeriodLabel subtitle above already gives that context).
+  const dateSubLabel = (i) => range === 'week' ? `<div style="font-size:8px;color:var(--text3);margin-top:1px;">${statsBucketLabel(range, offset, i)}</div>` : '';
+
   const { labels, milkCounts } = bucketize(range, evs, 'milk');
   const mMax = Math.max(1, ...milkCounts);
   const milkChart = sCard(`喝奶次數（${range === 'week' ? '每日' : range === 'month' ? '每週' : '每月'}）`,
-    `<div style="display:flex;align-items:flex-end;gap:6px;height:120px;">${milkCounts.map((v, i) => `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;"><div style="font-size:9px;color:var(--text3);font-weight:700;">${v}</div><div style="width:100%;height:${Math.round(v / mMax * 86) + 6}px;background:linear-gradient(180deg,#FF8C6B,#FF6B4A);border-radius:6px;"></div><div style="font-size:9px;color:var(--text2);font-weight:600;">${labels[i]}</div></div>`).join('')}</div>`);
+    `<div style="display:flex;align-items:flex-end;gap:6px;height:120px;">${milkCounts.map((v, i) => `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;"><div style="font-size:9px;color:var(--text3);font-weight:700;">${v}</div><div style="width:100%;height:${Math.round(v / mMax * 86) + 6}px;background:linear-gradient(180deg,#FF8C6B,#FF6B4A);border-radius:6px;"></div><div style="font-size:9px;color:var(--text2);font-weight:600;">${labels[i]}</div>${dateSubLabel(i)}</div>`).join('')}</div>`);
 
+  // Tapping a bar expands that bucket's breast/formula breakdown below the chart — in week
+  // mode that's a single day; in month/year mode (where a bar is a week's or a month's
+  // total) it expands that whole week's/month's breast+formula totals instead, per the
+  // user's request, since there's no single "that day" to show there.
   const { breastMl, formulaMl } = bucketizeMl(range, evs);
   const totals = breastMl.map((b, i) => b + formulaMl[i]);
   const aMax = Math.max(1, ...totals);
+  const expandedIdx = state.statsExpandedBar;
+  const expandedDetail = (expandedIdx != null && expandedIdx < totals.length)
+    ? `<div style="margin-top:12px;padding:10px 12px;background:var(--card2);border-radius:12px;display:flex;justify-content:space-between;align-items:center;">
+        <span style="font-size:12px;font-weight:700;color:var(--text2);">${esc(statsBucketLabel(range, offset, expandedIdx))}</span>
+        <span style="font-size:12px;color:var(--text);"><span style="color:#FF8C6B;font-weight:700;">母乳 ${breastMl[expandedIdx]}ml</span>　<span style="color:#E8A33D;font-weight:700;">配方 ${formulaMl[expandedIdx]}ml</span></span>
+      </div>`
+    : '';
   const amtChart = sCard('奶量 ml（母乳 ＋ 配方）',
-    `<div style="display:flex;align-items:flex-end;gap:6px;height:120px;">${totals.map((tot, i) => `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;"><div style="width:100%;height:${Math.round(tot / aMax * 92)}px;border-radius:6px;overflow:hidden;display:flex;flex-direction:column;">${tot > 0 ? `<div style="height:${formulaMl[i] / tot * 100}%;background:#E8A33D;"></div><div style="flex:1;background:#FF8C6B;"></div>` : ''}</div><div style="font-size:9px;color:var(--text2);font-weight:600;">${labels[i]}</div></div>`).join('')}</div>
-    <div style="display:flex;gap:14px;margin-top:12px;justify-content:center;">${[['#FF8C6B', '母乳'], ['#E8A33D', '配方']].map(([c, l]) => `<div style="display:flex;align-items:center;gap:4px;"><div style="width:9px;height:9px;border-radius:50%;background:${c};"></div><span style="font-size:11px;color:var(--text2);">${l}</span></div>`).join('')}</div>`);
+    `<div style="display:flex;align-items:flex-end;gap:6px;height:120px;">${totals.map((tot, i) => `<div onclick="A.toggleMlBar(${i})" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;cursor:pointer;"><div style="width:100%;height:${Math.round(tot / aMax * 92)}px;border-radius:6px;overflow:hidden;display:flex;flex-direction:column;outline:${expandedIdx === i ? '2px solid var(--accent)' : 'none'};outline-offset:2px;">${tot > 0 ? `<div style="height:${formulaMl[i] / tot * 100}%;background:#E8A33D;"></div><div style="flex:1;background:#FF8C6B;"></div>` : ''}</div><div style="font-size:9px;color:var(--text2);font-weight:600;">${labels[i]}</div>${dateSubLabel(i)}</div>`).join('')}</div>
+    <div style="display:flex;gap:14px;margin-top:12px;justify-content:center;">${[['#FF8C6B', '母乳'], ['#E8A33D', '配方']].map(([c, l]) => `<div style="display:flex;align-items:center;gap:4px;"><div style="width:9px;height:9px;border-radius:50%;background:${c};"></div><span style="font-size:11px;color:var(--text2);">${l}</span></div>`).join('')}</div>
+    ${expandedDetail}`);
 
   // A diaper change is one or more poop/pee events logged at the *exact same* timestamp —
   // per the user, their baby rarely finishes everything in one go, so even a 1-minute gap
@@ -616,11 +679,17 @@ function renderFeedStats(state) {
       <div style="font-size:9px;font-weight:700;color:#C8965A;line-height:1.3;">${dPoop[i]}</div>
       <div style="font-size:9px;font-weight:700;color:#79C3F0;line-height:1.3;">${dPee[i]}</div>
       <div style="width:100%;margin-top:5px;height:${Math.round(cnt / dMax * 76) + (cnt > 0 ? 6 : 0)}px;border-radius:6px;overflow:hidden;display:flex;flex-direction:column;">${cnt > 0 ? `<div style="height:${dPoop[i] / ((dPoop[i] + dPee[i]) || 1) * 100}%;background:#C8965A;"></div><div style="flex:1;background:#79C3F0;"></div>` : ''}</div>
-      <div style="font-size:9px;color:var(--text2);font-weight:600;margin-top:6px;">${labels[i]}</div>
+      <div style="font-size:9px;color:var(--text2);font-weight:600;margin-top:6px;">${labels[i]}</div>${dateSubLabel(i)}
     </div>`).join('')}</div>
     <div style="display:flex;gap:14px;margin-top:12px;justify-content:center;">${[['var(--text)', '換尿布次數'], ['#C8965A', '排便'], ['#79C3F0', '尿尿']].map(([c, l]) => `<div style="display:flex;align-items:center;gap:4px;"><div style="width:9px;height:9px;border-radius:50%;background:${c};"></div><span style="font-size:11px;color:var(--text2);">${l}</span></div>`).join('')}</div>`);
 
-  return rangeTabs + summary + caregiverCard + milkChart + amtChart + diaperChart;
+  // Left/right swipe (see App.startStatsSwipe/endStatsSwipe) pages through weeks/months/
+  // years — swipe left goes further back in time, matching the convention used by e.g.
+  // Apple Health's weekly charts. Wraps all three charts together since they always show
+  // the same period.
+  const swipeCharts = `<div onpointerdown="A.startStatsSwipe(event.clientX)">${milkChart}${amtChart}${diaperChart}</div>`;
+
+  return rangeTabs + summary + caregiverCard + swipeCharts;
 }
 function bucketize(range, evs, type) {
   const now = new Date();

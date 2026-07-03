@@ -6,7 +6,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // long-press-repeat release — all bound once on window/root since #root persists across
   // re-renders, and each gesture's own DOM node can get replaced mid-gesture by a rerender.
   window.addEventListener('pointermove', (e) => { App.dragMove(e.clientX, e.clientY); App.sheetDragMove(e.clientY); });
-  window.addEventListener('pointerup', (e) => { App.dragEnd(); App.sheetDragEnd(e.clientY); App.stopHold(); });
+  window.addEventListener('pointerup', (e) => { App.dragEnd(); App.sheetDragEnd(e.clientY); App.stopHold(); App.endStatsSwipe(e.clientX); });
 
   // Pull-to-refresh: a plain page reload, not tied to sync (Firestore already syncs in
   // real time on its own). This is here purely as a manual "start clean" convenience —
