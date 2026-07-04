@@ -36,8 +36,13 @@ function applyTheme(state) {
 }
 
 // ============================= NAV =============================
+// Nav's active-tab color is deliberately its own coral (matching the stats page's
+// "喝奶次數" bar chart) rather than the shared --accent gold — the rest of the app
+// (FAB, primary buttons, timeline "now" line) stays gold; only this nav highlight and
+// the calendar's heatmap circles (see renderCalendar) use this second color.
+const NAV_ACTIVE_COLOR = '#FF8C6B';
 function navIcon(name, active) {
-  const c = active ? 'var(--accent)' : 'var(--text3)';
+  const c = active ? NAV_ACTIVE_COLOR : 'var(--text3)';
   if (name === 'home') return `<svg width="22" height="22" viewBox="0 0 22 22"><path d="M3 9.5L11 3l8 6.5V19a1 1 0 01-1 1H14v-5H8v5H4a1 1 0 01-1-1z" fill="${c}"/></svg>`;
   if (name === 'stats') return `<svg width="22" height="22" viewBox="0 0 22 22" fill="none"><rect x="2" y="12" width="4" height="7" rx="1.5" fill="${c}"/><rect x="9" y="7" width="4" height="12" rx="1.5" fill="${c}"/><rect x="16" y="4" width="4" height="15" rx="1.5" fill="${c}"/></svg>`;
   if (name === 'records') return `<svg width="22" height="22" viewBox="0 0 22 22" fill="none"><rect x="3" y="2" width="16" height="18" rx="3" stroke="${c}" stroke-width="1.5"/><path d="M7 7h8M7 11h8M7 15h5" stroke="${c}" stroke-width="1.5" stroke-linecap="round"/></svg>`;
@@ -79,10 +84,10 @@ function renderNav(state) {
   return `
   <div style="flex-shrink:0;height:84px;background:var(--nav);backdrop-filter:blur(10px);border-top:1px solid var(--line);display:flex;align-items:flex-start;justify-content:space-around;padding:10px 4px 0;z-index:20;">
     <button onclick="A.goHome()" style="background:none;border:none;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:56px;">
-      ${navIcon('home', s === 'home')}<span style="font-size:10px;font-weight:700;color:${s === 'home' ? 'var(--accent)' : 'var(--text3)'};">首頁</span>
+      ${navIcon('home', s === 'home')}<span style="font-size:10px;font-weight:700;color:${s === 'home' ? NAV_ACTIVE_COLOR : 'var(--text3)'};">首頁</span>
     </button>
     <button onclick="A.goStats()" style="background:none;border:none;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:56px;">
-      ${navIcon('stats', s === 'stats')}<span style="font-size:10px;font-weight:700;color:${s === 'stats' ? 'var(--accent)' : 'var(--text3)'};">統計</span>
+      ${navIcon('stats', s === 'stats')}<span style="font-size:10px;font-weight:700;color:${s === 'stats' ? NAV_ACTIVE_COLOR : 'var(--text3)'};">統計</span>
     </button>
     <div style="position:relative;width:60px;display:flex;flex-direction:column;align-items:center;margin-top:-18px;">
       <button onclick="A.openGrowth()" style="background:none;border:none;display:flex;flex-direction:column;align-items:center;">
@@ -93,10 +98,10 @@ function renderNav(state) {
       ${pawButtons()}
     </div>
     <button onclick="A.goRecords()" style="background:none;border:none;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:56px;">
-      ${navIcon('records', s === 'records')}<span style="font-size:10px;font-weight:700;color:${s === 'records' ? 'var(--accent)' : 'var(--text3)'};">紀錄</span>
+      ${navIcon('records', s === 'records')}<span style="font-size:10px;font-weight:700;color:${s === 'records' ? NAV_ACTIVE_COLOR : 'var(--text3)'};">紀錄</span>
     </button>
     <button onclick="A.goConfig()" style="background:none;border:none;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:56px;">
-      ${navIcon('config', s === 'config')}<span style="font-size:10px;font-weight:700;color:${s === 'config' ? 'var(--accent)' : 'var(--text3)'};">設定</span>
+      ${navIcon('config', s === 'config')}<span style="font-size:10px;font-weight:700;color:${s === 'config' ? NAV_ACTIVE_COLOR : 'var(--text3)'};">設定</span>
     </button>
   </div>`;
 }
@@ -1027,11 +1032,11 @@ function renderCalendar(state) {
     const isToday = key === todayKey;
     const selected = state.compareMode ? state.compareDays.includes(key) : state.calExpandedDay === key;
     // Heatmap intensity — floor at .28 so even a single-event day is still visibly marked,
-    // not just barely-there. --accent is the same #F0A500 in both themes, so it's safe to
-    // blend as a literal rgba() here rather than reaching for CSS color-mix() (patchier
-    // support on older iOS Safari).
+    // not just barely-there. Uses the same coral as NAV_ACTIVE_COLOR/the stats "喝奶次數"
+    // bar chart, not --accent — see NAV_ACTIVE_COLOR's comment for why the app has two
+    // accent colors now.
     const intensity = hasData ? 0.28 + 0.62 * (count / maxCount) : 0;
-    const circleBg = hasData ? `background:rgba(240,165,0,${intensity.toFixed(2)});` : 'background:transparent;';
+    const circleBg = hasData ? `background:rgba(255,140,107,${intensity.toFixed(2)});` : 'background:transparent;';
     const ring = selected ? 'box-shadow:0 0 0 2px var(--accent);' : (isToday ? 'box-shadow:0 0 0 1.5px var(--text3);' : '');
     cells.push(`<button onclick="A.calTapDay('${key}')" ${hasData ? '' : 'disabled'} style="aspect-ratio:1;border:none;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;font-family:inherit;color:${hasData ? 'var(--text)' : 'var(--text3)'};${circleBg}${ring}cursor:${hasData ? 'pointer' : 'default'};">${d}</button>`);
   }
@@ -1046,7 +1051,12 @@ function renderCalendar(state) {
   return `<div class="card" style="padding:16px;margin-bottom:14px;">${header}${wdRow}${grid}</div>`;
 }
 
+function hexToRgb(hex) {
+  const h = hex.replace('#', '');
+  return `${parseInt(h.substring(0, 2), 16)},${parseInt(h.substring(2, 4), 16)},${parseInt(h.substring(4, 6), 16)}`;
+}
 const DAY_PX_PER_HOUR = 32;
+const HEAT_BUCKET_MIN = 10; // heatmap band granularity for renderMultiDayTimeline
 // Shared "linear, uncompressed" day timeline: 1 date -> the single-day expand panel, 2-4
 // dates -> the compare panel. Every date is scaled against the exact same 24h axis (no
 // gap-collapsing, no cluster push-down like the home timeline) so multiple days stay
@@ -1081,6 +1091,36 @@ function renderMultiDayTimeline(dates) {
       if (last && Math.abs(t - last.t) <= 3 * 60000) { last.items.push(e); last.t = (last.t + t) / 2; }
       else groups.push({ t, items: [e] });
     });
+    // Density heatmap bands — one per (10-min bucket, color) pair present that day, each a
+    // full-width band that fades to transparent at its own top/bottom edge (same color, only
+    // the alpha changes, so overlapping bands from different event types blend naturally
+    // instead of fighting for a "correct" blended color). Darker = more events crammed into
+    // that same 10 minutes. Drawn first so the chips/dots above always paint over it.
+    const slotPxH = DAY_PX_PER_HOUR * HEAT_BUCKET_MIN / 60;
+    const slots = {};
+    evs.forEach(e => {
+      const t = new Date(e.time);
+      const idx = Math.floor((t.getHours() * 60 + t.getMinutes()) / HEAT_BUCKET_MIN);
+      const c = dotColor(e);
+      if (!slots[idx]) slots[idx] = {};
+      slots[idx][c] = (slots[idx][c] || 0) + 1;
+    });
+    // A band drawn at exactly its own 10-min slot height (~5px) squeezes the fade-in/fade-out
+    // into a couple of pixels each — indistinguishable from a flat, hard-edged line rather
+    // than a soft glow. Render each band several slots tall, centered on its real bucket, so
+    // the 3-stop alpha gradient actually has room to read as a blur; overlapping bands from
+    // adjacent buckets (same or different colors) blend further via ordinary alpha stacking.
+    const bandH = slotPxH * 5;
+    const heatHtml = Object.keys(slots).map(idxStr => {
+      const idx = parseInt(idxStr, 10);
+      const yCenter = idx * slotPxH + slotPxH / 2;
+      const y0 = yCenter - bandH / 2;
+      return Object.entries(slots[idx]).map(([colorHex, count]) => {
+        const rgb = hexToRgb(colorHex);
+        const alpha = Math.min(0.6, 0.22 + 0.14 * (count - 1));
+        return `<div style="position:absolute;left:0;right:0;top:${y0}px;height:${bandH}px;background:linear-gradient(to bottom, rgba(${rgb},0) 0%, rgba(${rgb},${alpha.toFixed(2)}) 50%, rgba(${rgb},0) 100%);pointer-events:none;"></div>`;
+      }).join('');
+    }).join('');
     const rowsHtml = groups.map(g => {
       const t = new Date(g.t);
       const y = (t.getHours() + t.getMinutes() / 60) * DAY_PX_PER_HOUR;
@@ -1096,7 +1136,7 @@ function renderMultiDayTimeline(dates) {
     const isToday = dk === dayKey(now);
     const nowLine = isToday ? `<div style="position:absolute;left:0;right:0;top:${(now.getHours() + now.getMinutes() / 60) * DAY_PX_PER_HOUR}px;height:1.5px;background:var(--accent);z-index:2;"></div>` : '';
     const header = `<div style="text-align:center;font-size:${n > 2 ? 10.5 : 12}px;font-weight:800;color:var(--text);">${dayStart.getMonth() + 1}/${dayStart.getDate()}<span style="color:var(--text3);font-weight:600;"> (${['日', '一', '二', '三', '四', '五', '六'][dayStart.getDay()]})</span></div>`;
-    return { header, body: `<div style="flex:1;min-width:0;position:relative;">${rowsHtml}${nowLine}</div>` };
+    return { header, body: `<div style="flex:1;min-width:0;position:relative;">${heatHtml}${rowsHtml}${nowLine}</div>` };
   });
   const headerRow = `<div style="display:flex;padding-left:${gutterW + 6}px;gap:6px;margin-bottom:6px;">${lanes.map(l => `<div style="flex:1;min-width:0;">${l.header}</div>`).join('')}</div>`;
   return `<div>
