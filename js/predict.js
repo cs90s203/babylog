@@ -123,16 +123,20 @@ function predictNextFeed(events, alarmOffsetMinutes, asOf) {
   }
 
   if (!nextTime) {
-    const nowHour = now.getHours() + now.getMinutes() / 60;
-    const sinceLastMin = (now - lastFeedTime) / 60000;
-    const currentBucket = bucketOf(lastFeedTime, now);
-    // Lean into night mode either once we're past the household's usual last-feed-before-bed
-    // time, or once we've already gone longer than the current daypart's typical gap
-    // (the general form of the old "exceeded the day median" check, now per-bucket instead
-    // of just day-vs-night).
-    const pastBedtime = typicalLastHour != null && bucketMedian.night != null && nowHour >= typicalLastHour;
-    const overdueForBucket = bucketMedian[currentBucket] != null && sinceLastMin > bucketMedian[currentBucket] && bucketMedian.night != null;
-    usedBucket = (pastBedtime || overdueForBucket) ? 'night' : currentBucket;
+    // Which bucket to project forward from is decided ENTIRELY from facts about the last
+    // feed itself (its own clock hour) — not from how much real time has elapsed since,
+    // which used to make the same underlying data produce a different answer purely
+    // depending on when you happened to check. E.g. checking at 22:00 (usedBucket
+    // 'evening', -> 23:30) vs 22:40 with no new feed logged (elapsed time alone tipped
+    // "overdue" and switched to 'night', -> 00:40) — a discontinuous jump with no new
+    // information behind it. Whether the last feed was itself already at/past the
+    // household's usual last-feed-of-the-day hour is a fixed fact the moment that feed
+    // was logged, so the prediction it produces stays stable no matter when you look at it
+    // afterward.
+    const lastFeedHour = lastFeedTime.getHours() + lastFeedTime.getMinutes() / 60;
+    const lastFeedBucket = bucketOf(lastFeedTime, lastFeedTime);
+    const pastBedtime = typicalLastHour != null && bucketMedian.night != null && lastFeedHour >= typicalLastHour;
+    usedBucket = pastBedtime ? 'night' : lastFeedBucket;
     medianMin = bucketMedian[usedBucket] != null ? bucketMedian[usedBucket] : median(allRecent);
     if (medianMin == null) return { status: 'collecting' };
     nextTime = new Date(lastFeedTime.getTime() + medianMin * 60000);
