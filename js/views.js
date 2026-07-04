@@ -223,6 +223,7 @@ function yearlyMonthlyMilkCounts() {
 // data-dependent (min event time .. now), making it look tiny with sparse data. Position
 // on the axis is "hours since winStart" (a plain float, can exceed the old 0-24 range) —
 // real Date math handles day rollover for free, so labels just work across midnight.
+const PREDICTION_SUCCESS_MIN = 15; // time-error threshold (minutes) for a "✓準" badge
 function renderTodayTimeline(state) {
   const now = new Date();
   const winStart = new Date(now.getTime() - 24 * 3600000);
@@ -476,7 +477,17 @@ function renderTodayTimeline(state) {
     // position on the axis, for that comparison.
     const milkItem = visibleItems.find(r => r.type === 'milk');
     const acc = milkItem && accuracyById[milkItem.id];
-    const accHtml = acc ? `<div style="position:absolute;right:4px;top:${cl.y - half}px;height:${2 * half}px;display:flex;flex-direction:column;justify-content:center;align-items:flex-end;text-align:right;font-size:8.5px;color:var(--text3);line-height:1.35;white-space:nowrap;z-index:2;"><div>${acc.timeErrorMin != null ? '誤差 ' + (acc.timeErrorMin >= 0 ? '+' : '') + acc.timeErrorMin + 'm' : ''}</div><div>${acc.mlError != null ? (acc.mlError >= 0 ? '+' : '') + acc.mlError + 'ml' : ''}</div></div>` : '';
+    // Within PREDICTION_SUCCESS_MIN, the predicted and actual time are close enough that
+    // drawing them as two separate timeline positions is just noise — collapse it into a
+    // single "✓準" badge instead (see the ghost-marker loop below, which skips its own
+    // marker for these same accurate ones rather than trying to fix the overlap by fiddling
+    // with layout/spacing).
+    const isAccurate = acc && acc.timeErrorMin != null && Math.abs(acc.timeErrorMin) <= PREDICTION_SUCCESS_MIN;
+    const mlPart = (a) => a.mlError != null ? (a.mlError >= 0 ? '+' : '') + a.mlError + 'ml' : '';
+    const accHtml = acc ? `<div style="position:absolute;right:4px;top:${cl.y - half}px;height:${2 * half}px;display:flex;flex-direction:column;justify-content:center;align-items:flex-end;text-align:right;font-size:8.5px;color:${isAccurate ? '#5BBFA0' : 'var(--text3)'};line-height:1.35;white-space:nowrap;z-index:2;">${isAccurate
+        ? `<div>✓準${acc.timeErrorMin !== 0 ? ' ' + (acc.timeErrorMin >= 0 ? '+' : '') + acc.timeErrorMin + 'm' : ''} ${mlPart(acc)}</div>`
+        : `<div>${acc.timeErrorMin != null ? '誤差 ' + (acc.timeErrorMin >= 0 ? '+' : '') + acc.timeErrorMin + 'm' : ''}</div><div>${mlPart(acc)}</div>`
+      }</div>` : '';
     nodes += `<div style="position:absolute;left:${axisX - 4}px;top:${cl.y - 5}px;width:10px;height:10px;border-radius:50%;background:${dotColor(visibleItems[0])};border:2px solid var(--card);z-index:2;"></div>
       <div style="position:absolute;left:${HOURW}px;width:${axisX - HOURW - 8}px;text-align:right;top:${cl.y - 8}px;font-size:12px;font-weight:800;color:var(--text);z-index:2;">${hm(dateOfPos(cl.time))}</div>
       <div style="position:absolute;left:${axisX + 14}px;right:4px;top:${cl.y - half}px;min-height:${2 * half}px;${rowStyle}z-index:2;">${itemsHtml}</div>
@@ -497,6 +508,10 @@ function renderTodayTimeline(state) {
     const inCollapsedSeg = (p) => segs.some(sg => sg.collapsed && p >= sg.h0 - 1e-6 && p <= sg.h1 + 1e-6);
     Object.values(accuracyById).forEach(acc => {
       if (!acc.predictedTime) return;
+      // Accurate ones (within PREDICTION_SUCCESS_MIN) already get the "✓準" badge on the
+      // actual row — the predicted and actual positions are too close together for a
+      // separate ghost to add anything but visual clutter/overlap.
+      if (acc.timeErrorMin != null && Math.abs(acc.timeErrorMin) <= PREDICTION_SUCCESS_MIN) return;
       const p = posOf(acc.predictedTime);
       if (p < startH - 1e-6 || p > endH + 1e-6) return;
       if (inCollapsedSeg(p)) return;
