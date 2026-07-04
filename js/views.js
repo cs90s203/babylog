@@ -466,16 +466,45 @@ function renderTodayTimeline(state) {
     const rowStyle = compact
       ? `display:flex;align-items:center;`
       : `display:flex;align-items:center;gap:6px;flex-wrap:wrap;`;
-    // Prediction-vs-actual annotation — only meaningful for the milk feed in this cluster
-    // (if any), rendered in whatever blank space is left to the right of the chip row.
+    // Prediction-vs-actual ERROR only, attached to the actual feed's own row (only
+    // meaningful for the milk feed in this cluster, if any) — just how far off the
+    // prediction was, in whatever blank space is left to the right of the chip row. The
+    // predicted clock time itself is NOT shown here anymore: showing e.g. "預測 12:10" right
+    // next to a chip that's physically sitting at the 09:34 row read as if the two were
+    // supposed to be the same time, which is exactly backwards when the prediction was off
+    // by hours — see the separate ghost marker below, drawn at the predicted time's own
+    // position on the axis, for that comparison.
     const milkItem = visibleItems.find(r => r.type === 'milk');
     const acc = milkItem && accuracyById[milkItem.id];
-    const accHtml = acc ? `<div style="position:absolute;right:4px;top:${cl.y - half}px;height:${2 * half}px;display:flex;flex-direction:column;justify-content:center;align-items:flex-end;text-align:right;font-size:8.5px;color:var(--text3);line-height:1.35;white-space:nowrap;z-index:2;"><div>預測 ${acc.predictedTime ? hm(acc.predictedTime) : '—'}${acc.predictedMl != null ? '・' + acc.predictedMl + 'ml' : ''}</div><div>${acc.timeErrorMin != null ? (acc.timeErrorMin >= 0 ? '+' : '') + acc.timeErrorMin + 'm' : ''}${acc.mlError != null ? ' ' + (acc.mlError >= 0 ? '+' : '') + acc.mlError + 'ml' : ''}</div></div>` : '';
+    const accHtml = acc ? `<div style="position:absolute;right:4px;top:${cl.y - half}px;height:${2 * half}px;display:flex;flex-direction:column;justify-content:center;align-items:flex-end;text-align:right;font-size:8.5px;color:var(--text3);line-height:1.35;white-space:nowrap;z-index:2;"><div>${acc.timeErrorMin != null ? '誤差 ' + (acc.timeErrorMin >= 0 ? '+' : '') + acc.timeErrorMin + 'm' : ''}</div><div>${acc.mlError != null ? (acc.mlError >= 0 ? '+' : '') + acc.mlError + 'ml' : ''}</div></div>` : '';
     nodes += `<div style="position:absolute;left:${axisX - 4}px;top:${cl.y - 5}px;width:10px;height:10px;border-radius:50%;background:${dotColor(visibleItems[0])};border:2px solid var(--card);z-index:2;"></div>
       <div style="position:absolute;left:${HOURW}px;width:${axisX - HOURW - 8}px;text-align:right;top:${cl.y - 8}px;font-size:12px;font-weight:800;color:var(--text);z-index:2;">${hm(dateOfPos(cl.time))}</div>
       <div style="position:absolute;left:${axisX + 14}px;right:4px;top:${cl.y - half}px;min-height:${2 * half}px;${rowStyle}z-index:2;">${itemsHtml}</div>
       ${accHtml}`;
   });
+  // Ghost markers for the predicted time itself — drawn at the predicted time's OWN
+  // position on the axis (not next to the actual feed), since that's what "corresponds to
+  // the right spot on the timeline" actually means: if the prediction was off by hours, the
+  // ghost dot shows up hours away from where the real feed happened, which is the whole
+  // point of the comparison. Dashed/muted styling distinguishes it from real events. Falls
+  // outside the visible window entirely (predicted at some now-untracked hour before
+  // winStart, e.g. from a very early morning miss) is simply skipped rather than clamped.
+  if (state.showPredictionOverlay) {
+    // A predicted time that lands inside a currently-collapsed "無紀錄" gap has nowhere
+    // sensible to draw — that whole span is folded into one short placeholder row — so skip
+    // it there instead of stacking on top of the gap's own label (same treatment already
+    // given to hourMarks above).
+    const inCollapsedSeg = (p) => segs.some(sg => sg.collapsed && p >= sg.h0 - 1e-6 && p <= sg.h1 + 1e-6);
+    Object.values(accuracyById).forEach(acc => {
+      if (!acc.predictedTime) return;
+      const p = posOf(acc.predictedTime);
+      if (p < startH - 1e-6 || p > endH + 1e-6) return;
+      if (inCollapsedSeg(p)) return;
+      const y = yOfAdjusted(p);
+      nodes += `<div style="position:absolute;left:${axisX - 3}px;top:${y - 4}px;width:8px;height:8px;border-radius:50%;border:1.5px dashed var(--text3);background:transparent;z-index:1;"></div>
+        <div style="position:absolute;left:${axisX + 14}px;right:4px;top:${y - 7}px;font-size:9.5px;color:var(--text3);white-space:nowrap;z-index:1;">┄ 預測 ${hm(acc.predictedTime)}${acc.predictedMl != null ? '・' + acc.predictedMl + 'ml' : ''}</div>`;
+    });
+  }
   if (dragEv) {
     const y = yOfAdjusted(dragEv.h);
     nodes += `<div id="ddot" style="position:absolute;left:${axisX - 5}px;top:${y - 6}px;width:12px;height:12px;border-radius:50%;background:${dotColor(dragEv)};border:2px solid var(--card);z-index:8;"></div>
