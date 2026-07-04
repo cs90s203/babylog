@@ -1038,10 +1038,14 @@ function renderCalendar(state) {
     const intensity = hasData ? 0.28 + 0.62 * (count / maxCount) : 0;
     // Selected days get an extra radial layer painted first (so it sits on top of the
     // coral heat fill) — gold at the outer edge, fading to transparent toward the center,
-    // so the selection ring reads as glowing inward rather than just a flat outline.
-    const selectedGlow = selected ? 'radial-gradient(circle, transparent 55%, rgba(240,165,0,.4) 100%), ' : '';
+    // so the selection ring reads as glowing inward rather than just a flat outline. A
+    // crisp box-shadow ring (0 blur) previously sat on top of this and was so much more
+    // visually dominant than the soft gradient underneath that the gradient was
+    // effectively invisible — dropped the hard ring in favor of a blurred outer glow, so
+    // the edge itself reads as soft rather than a hard outline.
+    const selectedGlow = selected ? 'radial-gradient(circle, transparent 45%, rgba(240,165,0,.85) 100%), ' : '';
     const circleBg = hasData ? `background:${selectedGlow}rgba(255,140,107,${intensity.toFixed(2)});` : 'background:transparent;';
-    const ring = selected ? 'box-shadow:0 0 0 2px var(--accent);' : (isToday ? 'box-shadow:0 0 0 1.5px var(--text3);' : '');
+    const ring = selected ? 'box-shadow:0 0 7px 1px rgba(240,165,0,.65);' : (isToday ? 'box-shadow:0 0 0 1.5px var(--text3);' : '');
     cells.push(`<button onclick="A.calTapDay('${key}')" ${hasData ? '' : 'disabled'} style="aspect-ratio:1;border:none;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;font-family:inherit;color:${hasData ? 'var(--text)' : 'var(--text3)'};${circleBg}${ring}cursor:${hasData ? 'pointer' : 'default'};">${d}</button>`);
   }
   const wd = ['日', '一', '二', '三', '四', '五', '六'];
