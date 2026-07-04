@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.19.2';
+const APP_VERSION = '2.20.0';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -30,6 +30,7 @@ const App = {
     compareMode: false,
     compareDays: [], // up to 4 dayKey strings, selected while compareMode is on
     dayFilterTypes: ['milk', 'poop', 'pee', 'brush'], // which event types renderMultiDayTimeline shows — shared by the single-day expand panel and compare mode
+    pendingCaregiverRename: null, // { oldName, newName } while confirming a "我是…" change that would bulk-rewrite past records
     editingId: null,
     editBy: '',
     confirmDelId: null,
@@ -503,7 +504,17 @@ const App = {
     const gWeight = dv('f-g-weight'), gHeight = dv('f-g-height'), gHead = dv('f-g-head');
     if (!gWeight && !gHeight && !gHead) { this.set({ sheet: null, editingGrowthId: null }); return; }
     const f = (x) => { const n = parseFloat(x); return isNaN(n) ? null : n; };
-    const patch = { date: this.state.gDate, weight: f(gWeight), height: f(gHeight), head: f(gHead) };
+    const weight = f(gWeight), height = f(gHeight), head = f(gHead);
+    // Sanity bounds (generous enough to cover 0-24 months, not tied to any one baby's own
+    // history) — these are plain text inputs so nothing stops a stray extra digit or typo,
+    // and a wildly-off value would silently distort the growth chart/percentile otherwise.
+    const GROWTH_BOUNDS = { weight: [0.3, 40], height: [25, 130], head: [20, 60] };
+    const outOfRange = (v, [lo, hi]) => v != null && (v < lo || v > hi);
+    if (outOfRange(weight, GROWTH_BOUNDS.weight) || outOfRange(height, GROWTH_BOUNDS.height) || outOfRange(head, GROWTH_BOUNDS.head)) {
+      this.toast('⚠️', '數值看起來不太合理，請確認後再送出');
+      return;
+    }
+    const patch = { date: this.state.gDate, weight, height, head };
     if (this.state.editingGrowthId) {
       Store.updateGrowth(this.state.editingGrowthId, patch);
       this.toast('✏️', '已更新');
@@ -571,7 +582,24 @@ const App = {
     };
     reader.readAsDataURL(file);
   },
-  setCaregiver(v) { Store.setCaregiver(v); },
+  // Renaming "我是…" bulk-rewrites every past record's `by` field to match (see
+  // Store.setCaregiver) — worth a confirmation step since a mistyped/accidental change
+  // would otherwise silently overwrite history with no undo. Only the actual rename case
+  // needs confirming: first-time setup (old name empty) or re-submitting the same name
+  // go straight through.
+  requestSetCaregiver(v) {
+    const newName = (v || '').trim();
+    const oldName = Store.caregiver;
+    if (!newName || !oldName || newName === oldName) { Store.setCaregiver(newName); return; }
+    this.set({ pendingCaregiverRename: { oldName, newName } });
+  },
+  confirmCaregiverRename() {
+    const p = this.state.pendingCaregiverRename;
+    if (!p) return;
+    Store.setCaregiver(p.newName);
+    this.set({ pendingCaregiverRename: null });
+  },
+  cancelCaregiverRename() { this.set({ pendingCaregiverRename: null }); },
   setDurationMode(type, mode) { Store.updateDuration(type, { mode }); },
   setDurationMin(type, delta) {
     const cur = Store.data.settings.duration[type].minutes;

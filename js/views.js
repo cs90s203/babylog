@@ -987,7 +987,19 @@ function renderGrowthStats(state) {
   const chartSvg = `<svg viewBox="0 0 ${GW} ${GH}" style="width:100%;height:auto;overflow:visible;">${gk}</svg>`;
   const zoomToggle = canZoom ? `<div style="text-align:center;margin-bottom:8px;"><button onclick="A.set({growthZoomed:${!zoomed}})" style="background:var(--card2);border:none;border-radius:10px;padding:6px 14px;font-size:11px;font-weight:700;color:var(--text2);">${zoomed ? '🔍 顯示完整 0-24 個月' : '🔍 縮放至目前月齡'}</button></div>` : '';
   const metricBtns = `<div class="seg" style="margin-bottom:14px;">${[['weight', '⚖️ 體重'], ['height', '📏 身高'], ['head', '🧠 頭圍']].map(([k, l]) => `<button class="${gm === k ? 'active' : ''}" onclick="A.set({growthMetric:'${k}'})">${l}</button>`).join('')}</div>`;
-  const gList = growth.slice().sort((a, b) => new Date(b.date) - new Date(a.date)).map(r => `<div onclick='A.openEditGrowth(${JSON.stringify(r).replace(/'/g, "&#39;")})' style="display:flex;align-items:center;gap:8px;justify-content:space-between;padding:11px 14px;border-bottom:1px solid var(--line);cursor:pointer;"><span style="font-size:12.5px;color:var(--text2);">${esc(r.date)}</span><span style="font-size:13px;font-weight:700;color:var(--text);">⚖️ ${r.weight ?? '—'}  📏 ${r.height ?? '—'}  🧠 ${r.head ?? '—'}</span><svg width="7" height="12" viewBox="0 0 7 12" fill="none" style="flex-shrink:0;"><path d="M1 1l5 5-5 5" stroke="var(--text3)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></div>`).join('');
+  // Percentile badge for whichever metric tab is selected — computed per row (not just the
+  // latest measurement), so a measurement logged out of order or after a gap still shows
+  // where it falls, instead of only ever being able to see the newest one's percentile.
+  const rowPercentile = (r) => {
+    if (!hasProfile || r[gm] == null) return null;
+    const z = whoZScore(gm, baby.babySex, ageOf(r.date), r[gm]);
+    return z ? Math.round(z.percentile) : null;
+  };
+  const gList = growth.slice().sort((a, b) => new Date(b.date) - new Date(a.date)).map(r => {
+    const pct = rowPercentile(r);
+    const pctBadge = pct != null ? `<span style="font-size:10.5px;font-weight:700;color:var(--accent);background:var(--card2);border-radius:8px;padding:2px 6px;margin-left:6px;">P${pct}</span>` : '';
+    return `<div onclick='A.openEditGrowth(${JSON.stringify(r).replace(/'/g, "&#39;")})' style="display:flex;align-items:center;gap:8px;justify-content:space-between;padding:11px 14px;border-bottom:1px solid var(--line);cursor:pointer;"><span style="font-size:12.5px;color:var(--text2);display:flex;align-items:center;">${esc(r.date)}${pctBadge}</span><span style="font-size:13px;font-weight:700;color:var(--text);">⚖️ ${r.weight ?? '—'}  📏 ${r.height ?? '—'}  🧠 ${r.head ?? '—'}</span><svg width="7" height="12" viewBox="0 0 7 12" fill="none" style="flex-shrink:0;"><path d="M1 1l5 5-5 5" stroke="var(--text3)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></div>`;
+  }).join('');
   const note = hasProfile ? '依 WHO LMS 對照表計算之百分位曲線（3/15/50/85/97），僅供參考、非醫療診斷' : '填寫「寶寶資料」的生日與性別後，會顯示 WHO 百分位曲線';
 
   // Latest measurement's percentile rank for whichever metric tab is currently selected —
@@ -1304,7 +1316,7 @@ function renderSettings(state) {
       ${sectionLabel('這支手機的使用者')}
       <div class="card" style="padding:16px;">
         <p style="font-size:11px;color:var(--text2);font-weight:600;margin-bottom:7px;">我是…（之後每筆記錄會標記成這個名字）</p>
-        <input type="text" value="${esc(Store.caregiver)}" onchange="A.setCaregiver(this.value)" placeholder="爸爸、媽媽、阿嬤、保母…" />
+        <input type="text" value="${esc(Store.caregiver)}" onchange="A.requestSetCaregiver(this.value)" placeholder="爸爸、媽媽、阿嬤、保母…" />
       </div>
     </div>
     <div style="padding:18px 16px 0;">
@@ -1561,6 +1573,21 @@ function renderDeleteGrowthConfirm(state) {
   </div>`;
 }
 
+function renderRenameConfirm(state) {
+  const p = state.pendingCaregiverRename;
+  if (!p) return '';
+  return `<div style="position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);backdrop-filter:blur(4px);z-index:90;display:flex;align-items:center;justify-content:center;" onclick="A.cancelCaregiverRename()">
+    <div onclick="event.stopPropagation()" style="background:var(--card);border-radius:26px;padding:26px 24px 20px;width:280px;text-align:center;box-shadow:0 24px 80px var(--shadow2);animation:pop .35s cubic-bezier(.17,.67,.32,1.2);">
+      <div style="font-size:40px;margin-bottom:8px;">✏️</div>
+      <p style="font-size:16px;font-weight:800;margin-bottom:3px;color:var(--text);">要把歷史紀錄一起改名嗎？</p>
+      <p style="font-size:13px;color:var(--text2);margin-bottom:18px;line-height:1.5;">過去所有標記為「${esc(p.oldName)}」的紀錄，會一起改成「${esc(p.newName)}」，這個動作沒有辦法復原。</p>
+      <div style="display:flex;gap:10px;">
+        <button onclick="A.cancelCaregiverRename()" style="flex:1;background:var(--card2);border:none;border-radius:14px;padding:13px;font-size:15px;font-weight:700;color:var(--text2);">取消</button>
+        <button onclick="A.confirmCaregiverRename()" style="flex:1;background:var(--accent);border:none;border-radius:14px;padding:13px;font-size:15px;font-weight:800;color:#fff;box-shadow:0 4px 14px rgba(240,165,0,.4);">確定改名</button>
+      </div>
+    </div>
+  </div>`;
+}
 function renderWelcome(state) {
   if (!state.showWelcome) return '';
   return `<div style="position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.55);backdrop-filter:blur(8px);z-index:110;display:flex;align-items:center;justify-content:center;padding:24px;">
@@ -1638,6 +1665,7 @@ function render(state) {
     ${renderSheet(state)}
     ${renderDeleteConfirm(state)}
     ${renderDeleteGrowthConfirm(state)}
+    ${renderRenameConfirm(state)}
     ${renderWelcome(state)}
     ${renderToast(state)}
   </div>`;

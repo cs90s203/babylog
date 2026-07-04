@@ -131,10 +131,20 @@ const Sync = {
   },
 
   // ---- real-time listeners: remote change -> merge into Store.data -> re-render ----
+  _listenerRetryCount: 0,
+  _retryTimer: null,
   _attachListeners() {
     this._detachListeners();
+    clearTimeout(this._retryTimer);
     let pending = 3;
-    const settled = () => { pending--; if (pending <= 0) { this._set("done"); Store.local("last_sync", this._nowLabel()); } };
+    const settled = () => {
+      pending--;
+      if (pending <= 0) {
+        this._listenerRetryCount = 0; // back to healthy — a future error starts backoff from scratch
+        this._set("done");
+        Store.local("last_sync", this._nowLabel());
+      }
+    };
 
     unsubEvents = fbDb.collection(`${familyPath()}/events`).onSnapshot(
       (snap) => { snap.docChanges().forEach((c) => Store.mergeRemote("events", { id: c.doc.id, ...c.doc.data() })); settled(); },
@@ -150,14 +160,27 @@ const Sync = {
     );
   },
   _detachListeners() {
+    clearTimeout(this._retryTimer);
     if (unsubEvents) unsubEvents();
     if (unsubGrowth) unsubGrowth();
     if (unsubSettings) unsubSettings();
     unsubEvents = unsubGrowth = unsubSettings = null;
   },
+  // Most listener errors are transient (a network blip, a brief permission-check hiccup
+  // right after sign-in) — retrying with backoff recovers from those on its own instead of
+  // sitting in a permanent "fail" state that looks like data stopped syncing. Only gives up
+  // (and asks for a manual tap-to-retry, see renderSyncPill) after several attempts.
   _onListenerError(err) {
     console.error("Firestore listener error:", err);
-    this._set("fail", "同步發生錯誤：" + err.message);
+    this._listenerRetryCount++;
+    if (this._listenerRetryCount > 5) {
+      this._set("fail", "同步發生錯誤（已自動重試多次）：" + err.message);
+      return;
+    }
+    this._set("syncing", `連線不穩，重新連線中…(${this._listenerRetryCount})`);
+    const delay = Math.min(30000, 1000 * Math.pow(2, this._listenerRetryCount));
+    clearTimeout(this._retryTimer);
+    this._retryTimer = setTimeout(() => { if (this.isSignedIn()) this._attachListeners(); }, delay);
   },
   _nowLabel() {
     const d = new Date();
