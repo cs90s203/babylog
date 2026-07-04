@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.18.1';
+const APP_VERSION = '2.19.0';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -370,6 +370,10 @@ const App = {
   },
   setEditType(t) { this.set({ recordType: t }); },
   onEditBy(v) { this.set({ editBy: v }); },
+  // Tapping a caregiver tag (see allCaregiverNames/renderEditRecSheet) — a normal rerender
+  // is fine here (unlike typing in the text input), since a tap isn't the same
+  // mid-keystroke gesture that a rerender would otherwise interrupt.
+  pickEditBy(name) { this.set({ editBy: name }); },
   // The 由誰處理 field has no onchange binding (see closeWelcome for why: a re-render
   // mid-tap can drop the click on the Save/Delete button right next to it), so read
   // the live DOM value at submit time instead of state.editBy.

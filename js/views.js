@@ -132,10 +132,12 @@ function renderPrediction() {
     let cd;
     if (rem > 0) { const rh = Math.floor(rem / 60), rm = Math.round(rem % 60); cd = '⏱ ' + (rh > 0 ? `還有 ${rh}h ${rm}m` : `還有 ${rm}m`); }
     else cd = '✨ 現在可以餵囉';
+    const amt = AppRef().predictAmount();
+    const amtLabel = amt != null ? `<span style="font-size:16px;font-weight:700;color:var(--text2);">・約${amt}ml</span>` : '';
     return `<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;">
       <div>
         <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.8px;margin-bottom:5px;">預計下一餐</p>
-        <p style="font-size:34px;font-weight:800;letter-spacing:-1.5px;line-height:1;color:var(--text);">${hm(p.nextTime)}</p>
+        <p style="font-size:34px;font-weight:800;letter-spacing:-1.5px;line-height:1;color:var(--text);">${hm(p.nextTime)}${amtLabel}</p>
         <p style="font-size:13px;color:var(--text2);font-weight:500;margin-top:4px;">${cd}</p>
       </div>
       <div onpointerdown="A.startPredictionPress()" onpointerup="A.endPredictionPress()" onpointerleave="A.endPredictionPress()" style="width:62px;height:62px;border-radius:50%;background:var(--card2);display:flex;align-items:center;justify-content:center;font-size:30px;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;touch-action:none;">🍼</div>
@@ -557,6 +559,7 @@ function renderHome(state) {
   const totalMilkMl = todayEvents.filter(e => e.type === 'milk').reduce((s, e) => s + (e.amountMl || 0), 0);
   const poopCount = todayEvents.filter(e => e.type === 'poop').length;
   const peeCount = todayEvents.filter(e => e.type === 'pee').length;
+  const avgMlPerFeed = avgMlPerFeedAllTime();
   const btnSize = 112, btnOpacity = 0.75;
   const now = new Date();
   const todayLabel = now.toLocaleDateString('zh-TW', { weekday: 'long', month: 'long', day: 'numeric' });
@@ -577,13 +580,15 @@ function renderHome(state) {
     <div style="margin:0 16px 14px;background:var(--card);border-radius:18px;padding:18px 20px;box-shadow:0 2px 16px var(--shadow);">
       ${renderPrediction()}
       <div style="display:flex;padding-top:14px;border-top:1px solid var(--line);">
-        <div style="flex:1;text-align:center;"><p style="font-size:21px;font-weight:800;color:#FF7A56;line-height:1;">${milkCount}</p><p style="font-size:10px;color:var(--text2);font-weight:600;margin-top:2px;">喝奶</p></div>
-        <div style="width:1px;background:var(--line);margin:0 2px;"></div>
-        <div style="flex:1;text-align:center;"><p style="font-size:21px;font-weight:800;line-height:1;color:var(--text);">${totalMilkMl}</p><p style="font-size:10px;color:var(--text2);font-weight:600;margin-top:2px;">ml</p></div>
-        <div style="width:1px;background:var(--line);margin:0 2px;"></div>
-        <div style="flex:1;text-align:center;"><p style="font-size:21px;font-weight:800;color:#C8965A;line-height:1;">${poopCount}</p><p style="font-size:10px;color:var(--text2);font-weight:600;margin-top:2px;">排便</p></div>
-        <div style="width:1px;background:var(--line);margin:0 2px;"></div>
-        <div style="flex:1;text-align:center;"><p style="font-size:21px;font-weight:800;color:#4AAEDF;line-height:1;">${peeCount}</p><p style="font-size:10px;color:var(--text2);font-weight:600;margin-top:2px;">尿尿</p></div>
+        <div style="flex:1;text-align:center;min-width:0;"><p style="font-size:18px;font-weight:800;color:#FF7A56;line-height:1;">${milkCount}</p><p style="font-size:9.5px;color:var(--text2);font-weight:600;margin-top:2px;">喝奶</p></div>
+        <div style="width:1px;background:var(--line);margin:0 2px;flex-shrink:0;"></div>
+        <div style="flex:1;text-align:center;min-width:0;"><p style="font-size:18px;font-weight:800;line-height:1;color:var(--text);">${totalMilkMl}</p><p style="font-size:9.5px;color:var(--text2);font-weight:600;margin-top:2px;">ml</p></div>
+        <div style="width:1px;background:var(--line);margin:0 2px;flex-shrink:0;"></div>
+        <div style="flex:1;text-align:center;min-width:0;"><p style="font-size:18px;font-weight:800;color:#C8965A;line-height:1;">${poopCount}</p><p style="font-size:9.5px;color:var(--text2);font-weight:600;margin-top:2px;">排便</p></div>
+        <div style="width:1px;background:var(--line);margin:0 2px;flex-shrink:0;"></div>
+        <div style="flex:1;text-align:center;min-width:0;"><p style="font-size:18px;font-weight:800;color:#4AAEDF;line-height:1;">${peeCount}</p><p style="font-size:9.5px;color:var(--text2);font-weight:600;margin-top:2px;">尿尿</p></div>
+        <div style="width:1px;background:var(--line);margin:0 2px;flex-shrink:0;"></div>
+        <div style="flex:1;text-align:center;min-width:0;"><p style="font-size:18px;font-weight:800;line-height:1;color:var(--text);">${avgMlPerFeed ?? '—'}</p><p style="font-size:9.5px;color:var(--text2);font-weight:600;margin-top:2px;white-space:nowrap;">平均每餐ml</p></div>
       </div>
     </div>
     ${SHOW_HOME_QUICK_RECORD ? `<div style="padding:4px 16px 14px;">
@@ -704,6 +709,28 @@ function validStatsDays(from, to, offset) {
     valid.add(dayKey(d));
   }
   return valid;
+}
+// Distinct caregiver names seen across the baby's whole history (not scoped to whatever
+// period the stats page happens to be showing — see renderEditRecSheet), most-used first,
+// so reassigning "由誰處理" is a tap instead of retyping a name that's already been used.
+function allCaregiverNames() {
+  const counts = {};
+  Store.liveEvents().forEach(e => { const n = (e.by || '').trim(); if (n) counts[n] = (counts[n] || 0) + 1; });
+  return Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
+}
+// Home screen's "平均每餐ml" stat — average ml per feed, using only "complete" days (same
+// validStatsDays rule as the stats page: excludes today-in-progress and an incomplete
+// first tracking day), across the baby's whole history rather than any particular week/
+// month/year, since this is meant as a stable running average, not a period-specific one.
+function avgMlPerFeedAllTime() {
+  const all = Store.liveEvents();
+  if (!all.length) return null;
+  const earliest = new Date(Math.min(...all.map(e => new Date(e.time).getTime())));
+  const validDays = validStatsDays(earliest, new Date(), 0);
+  const milksValid = all.filter(e => e.type === 'milk' && validDays.has(dayKey(new Date(e.time))));
+  if (!milksValid.length) return null;
+  const totalMl = milksValid.reduce((s, e) => s + (e.amountMl || 0), 0);
+  return Math.round(totalMl / milksValid.length);
 }
 // Weekend vs weekday pattern — compares the average time of each day's FIRST milk feed
 // on Sat/Sun against Mon-Fri, across the baby's whole history (not scoped to the
@@ -1447,7 +1474,8 @@ function renderEditRecSheet(state, reopen) {
       ${typeSeg}
       ${milkBlock}
       <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin:16px 0 8px;">由誰處理</p>
-      <input id="f-edit-by" type="text" value="${esc(state.editBy)}" placeholder="名字" style="margin-bottom:14px;" />
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">${allCaregiverNames().map(n => `<button onclick="A.pickEditBy('${esc(n).replace(/'/g, "&#39;")}')" style="padding:8px 14px;border:none;border-radius:12px;font-size:13px;font-weight:700;font-family:inherit;background:${n === state.editBy ? 'var(--accent)' : 'var(--card2)'};color:${n === state.editBy ? '#fff' : 'var(--text2)'};">${esc(n)}</button>`).join('')}</div>
+      <input id="f-edit-by" type="text" value="${esc(state.editBy)}" placeholder="或輸入新名字" style="margin-bottom:14px;" />
       <button onclick="A.saveEdit()" class="primary-btn" style="padding:16px;font-size:16px;">✓ 儲存變更</button>
       <button onclick="A.deleteFromEdit()" style="width:100%;background:transparent;border:none;padding:12px;font-size:14px;font-weight:700;color:#E5573D;margin-top:4px;">🗑️ 刪除這筆</button>
     </div>
