@@ -133,7 +133,7 @@ function renderPrediction() {
         <p style="font-size:34px;font-weight:800;letter-spacing:-1.5px;line-height:1;color:var(--text);">${hm(p.nextTime)}</p>
         <p style="font-size:13px;color:var(--text2);font-weight:500;margin-top:4px;">${cd}</p>
       </div>
-      <div style="width:62px;height:62px;border-radius:50%;background:var(--card2);display:flex;align-items:center;justify-content:center;font-size:30px;">🍼</div>
+      <div onpointerdown="A.startPredictionPress()" onpointerup="A.endPredictionPress()" onpointerleave="A.endPredictionPress()" style="width:62px;height:62px;border-radius:50%;background:var(--card2);display:flex;align-items:center;justify-content:center;font-size:30px;">🍼</div>
     </div>`;
   }
   return `<div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;">
@@ -233,6 +233,14 @@ function renderTodayTimeline(state) {
   const windowEvents = Store.liveEvents()
     .filter(e => { const t = new Date(e.time); return t >= winStart && t <= winEnd; })
     .map(e => ({ ...e, h: posOf(new Date(e.time)) }));
+  // Prediction-vs-actual overlay (toggled via long-press on the home "next feed" icon, see
+  // App.startPredictionPress) — reconstructed on demand, not stored, since both
+  // predictNextFeed()/predictNextAmount() are pure functions of "events so far".
+  const accuracyById = {};
+  if (state.showPredictionOverlay) {
+    analyzeTodayPredictionAccuracy(Store.data.events, Store.data.settings.alarmOffsetMinutes || 0, Store.data.settings.babyBirth)
+      .forEach(a => { accuracyById[a.id] = a; });
+  }
   const pxH = 40, padTop = 14, HOURW = 22, axisX = 70, half = 19, keepR = 0.8, collapseMin = 3, collapsePx = 46;
   const dragEv = state.dragId ? windowEvents.find(e => e.id === state.dragId) : null;
   const startH = 0, endH = posOf(winEnd); // fixed window: always 0 .. 27
@@ -458,9 +466,15 @@ function renderTodayTimeline(state) {
     const rowStyle = compact
       ? `display:flex;align-items:center;`
       : `display:flex;align-items:center;gap:6px;flex-wrap:wrap;`;
+    // Prediction-vs-actual annotation — only meaningful for the milk feed in this cluster
+    // (if any), rendered in whatever blank space is left to the right of the chip row.
+    const milkItem = visibleItems.find(r => r.type === 'milk');
+    const acc = milkItem && accuracyById[milkItem.id];
+    const accHtml = acc ? `<div style="position:absolute;right:4px;top:${cl.y - half}px;text-align:right;font-size:8.5px;color:var(--text3);line-height:1.35;white-space:nowrap;z-index:2;">預測 ${acc.predictedTime ? hm(acc.predictedTime) : '—'}${acc.predictedMl != null ? '・' + acc.predictedMl + 'ml' : ''}<br>${acc.timeErrorMin != null ? (acc.timeErrorMin >= 0 ? '+' : '') + acc.timeErrorMin + 'm' : ''}${acc.mlError != null ? ' ' + (acc.mlError >= 0 ? '+' : '') + acc.mlError + 'ml' : ''}</div>` : '';
     nodes += `<div style="position:absolute;left:${axisX - 4}px;top:${cl.y - 5}px;width:10px;height:10px;border-radius:50%;background:${dotColor(visibleItems[0])};border:2px solid var(--card);z-index:2;"></div>
       <div style="position:absolute;left:${HOURW}px;width:${axisX - HOURW - 8}px;text-align:right;top:${cl.y - 8}px;font-size:12px;font-weight:800;color:var(--text);z-index:2;">${hm(dateOfPos(cl.time))}</div>
-      <div style="position:absolute;left:${axisX + 14}px;right:4px;top:${cl.y - half}px;min-height:${2 * half}px;${rowStyle}z-index:2;">${itemsHtml}</div>`;
+      <div style="position:absolute;left:${axisX + 14}px;right:4px;top:${cl.y - half}px;min-height:${2 * half}px;${rowStyle}z-index:2;">${itemsHtml}</div>
+      ${accHtml}`;
   });
   if (dragEv) {
     const y = yOfAdjusted(dragEv.h);

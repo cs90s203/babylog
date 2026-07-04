@@ -142,6 +142,62 @@ function predictNextFeed(events, alarmOffsetMinutes) {
   };
 }
 
+// Rough single-feed volume by age, generic public formula-feeding guidance (not
+// household-specific, not medical advice — same "reference curve" spirit as the WHO
+// growth percentiles). [ageMonths, typicalMlPerFeed]. Interpolated linearly between
+// points, same technique as who-data.js's lmsAt().
+const AGE_ML_REF = [[0, 60], [1, 90], [2, 120], [3, 130], [4, 150], [6, 180], [9, 200], [12, 220], [18, 220], [24, 200]];
+function refMlAtAge(ageMonths) {
+  const a = Math.max(0, Math.min(24, ageMonths));
+  let lo = AGE_ML_REF[0], hi = AGE_ML_REF[AGE_ML_REF.length - 1];
+  for (let i = 0; i < AGE_ML_REF.length - 1; i++) { if (a >= AGE_ML_REF[i][0] && a <= AGE_ML_REF[i + 1][0]) { lo = AGE_ML_REF[i]; hi = AGE_ML_REF[i + 1]; break; } }
+  const span = hi[0] - lo[0];
+  const f = span > 0 ? (a - lo[0]) / span : 0;
+  return lo[1] + (hi[1] - lo[1]) * f;
+}
+
+// Predicts the next feed's amount (ml). Primary signal is the household's own recent
+// feeds — taking the median of just the last N_RECENT naturally tracks "drinks more as
+// they grow" for free, since older/smaller feeds age out of that window on their own; no
+// separate growth-trend model needed. The age-based reference table only fills in early
+// on, before there's much of the baby's own data to trust — its influence fades out as
+// feeds accumulate (matured by 30 feeds, roughly a week or so for most feeding schedules).
+function predictNextAmount(events, babyBirthDate) {
+  const feeds = events.filter(e => e.type === 'milk' && (e.amountMl || 0) > 0).slice().sort((a, b) => new Date(a.time) - new Date(b.time));
+  const ownMedian = median(feeds.slice(-N_RECENT).map(e => e.amountMl));
+  let refMl = null;
+  if (babyBirthDate) refMl = refMlAtAge((new Date() - new Date(babyBirthDate)) / 86400000 / 30.4375);
+  if (ownMedian == null) return refMl != null ? Math.round(refMl) : null;
+  if (refMl == null) return Math.round(ownMedian);
+  const ownWeight = Math.min(1, feeds.length / 30);
+  return Math.round(ownWeight * ownMedian + (1 - ownWeight) * refMl);
+}
+
+// Retroactively reconstructs what predictNextFeed()/predictNextAmount() would have said
+// right before each of TODAY's actual feeds, using only the events that existed at that
+// moment — both are pure functions of "events so far", so no separate "mark a prediction
+// now, check back later" step is needed; accuracy can be reconstructed after the fact for
+// any feed that's already happened. Drives the prediction-vs-actual overlay on today's
+// timeline (see App.togglePredictionOverlay / renderTodayTimeline).
+function analyzeTodayPredictionAccuracy(events, alarmOffsetMinutes, babyBirthDate) {
+  const now = new Date();
+  const feeds = events.filter(e => e.type === 'milk').slice().sort((a, b) => new Date(a.time) - new Date(b.time));
+  const todayFeeds = feeds.filter(f => dateKey(new Date(f.time)) === dateKey(now));
+  return todayFeeds.map(f => {
+    const fTime = new Date(f.time);
+    const before = events.filter(e => new Date(e.time) < fTime);
+    const pred = predictNextFeed(before, alarmOffsetMinutes);
+    const predictedMl = predictNextAmount(before, babyBirthDate);
+    const actualMl = f.amountMl || 0;
+    if (pred.status !== 'ok') return { id: f.id, actualTime: fTime, actualMl, predictedTime: null, predictedMl, timeErrorMin: null, mlError: null };
+    return {
+      id: f.id, actualTime: fTime, actualMl, predictedTime: pred.nextTime, predictedMl,
+      timeErrorMin: Math.round((fTime - pred.nextTime) / 60000),
+      mlError: predictedMl != null ? actualMl - predictedMl : null,
+    };
+  });
+}
+
 /* Pseudocode (see docs/prediction.md):
  *   feeds = sortByTime(events.filter(type == 'milk'))
  *   if feeds.length < 2 or span(feeds) < 2 days: return "collecting"

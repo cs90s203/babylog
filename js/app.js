@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.15.1';
+const APP_VERSION = '2.16.0';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -33,6 +33,7 @@ const App = {
     frontChipId: null, // which overlapping timeline chip (if any) is currently brought to front
     expandedGaps: [],
     numEdit: null, // { field, value } while a tap-to-edit number input is open
+    showPredictionOverlay: false, // long-press the home "next feed" icon to toggle — see renderTodayTimeline
     toast: null,
     showWelcome: false,
     welcomeName: '',
@@ -57,6 +58,7 @@ const App = {
   _sheetDrag: null,
   _glowTimer: null,
   _statsSwipe: null,
+  _predPressTimer: null,
 
   init() {
     Store.init();
@@ -93,6 +95,19 @@ const App = {
   predict() {
     return predictNextFeed(Store.liveEvents(), Store.data.settings.alarmOffsetMinutes || 0);
   },
+  predictAmount() {
+    return predictNextAmount(Store.liveEvents(), Store.data.settings.babyBirth);
+  },
+  // Long-press the home "next feed" icon to reveal the prediction-vs-actual overlay on
+  // today's timeline (see renderTodayTimeline) — hidden by default, purely a debugging/
+  // curiosity view, not part of the everyday UI.
+  startPredictionPress() {
+    clearTimeout(this._predPressTimer);
+    this._predPressTimer = setTimeout(() => {
+      this.set({ showPredictionOverlay: !this.state.showPredictionOverlay });
+    }, 450);
+  },
+  endPredictionPress() { clearTimeout(this._predPressTimer); },
 
   // ---- navigation ----
   goHome() { this.set({ screen: 'home', sheet: null }); },
