@@ -1199,6 +1199,20 @@ function renderDayFilterChips(state) {
   }).join('');
   return `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">${chips}</div>`;
 }
+// Single-day summary for the calendar's day-expand panel — total ml, feed count,
+// poop/pee counts, and average ml per feed for that one calendar day.
+function dayStatsSummary(d) {
+  const dk = dayKey(d);
+  const evs = Store.liveEvents().filter(e => dayKey(new Date(e.time)) === dk);
+  const milks = evs.filter(e => e.type === 'milk');
+  const totalMl = milks.reduce((s, e) => s + (e.amountMl || 0), 0);
+  const avgMl = milks.length ? Math.round(totalMl / milks.length) : null;
+  const poopCount = evs.filter(e => e.type === 'poop').length;
+  const peeCount = evs.filter(e => e.type === 'pee').length;
+  const stat = (val, lbl) => `<div style="flex:1;text-align:center;min-width:0;"><p style="font-size:17px;font-weight:800;line-height:1;color:var(--text);">${val}</p><p style="font-size:9px;color:var(--text2);font-weight:600;margin-top:2px;white-space:nowrap;">${lbl}</p></div>`;
+  const div = `<div style="width:1px;background:var(--line);margin:0 2px;flex-shrink:0;"></div>`;
+  return `<div style="display:flex;background:var(--card2);border-radius:14px;padding:12px 4px;margin-bottom:12px;">${stat(totalMl, '總奶量ml')}${div}${stat(milks.length, '喝奶次數')}${div}${stat(poopCount, '排便次數')}${div}${stat(peeCount, '尿尿次數')}${div}${stat(avgMl ?? '—', '平均每餐ml')}</div>`;
+}
 function renderRecords(state) {
   const cal = renderCalendar(state);
   const toggleBtn = `<button onclick="A.toggleCompareMode()" style="font-size:12.5px;font-weight:700;font-family:inherit;color:${state.compareMode ? '#fff' : 'var(--text2)'};background:${state.compareMode ? 'var(--accent)' : 'var(--card2)'};border:none;border-radius:12px;padding:8px 14px;">📊 比較</button>`;
@@ -1219,6 +1233,7 @@ function renderRecords(state) {
     const wd = ['日', '一', '二', '三', '四', '五', '六'][d.getDay()];
     panel = `<div class="card" style="padding:16px;">
       <p style="font-size:15px;font-weight:800;color:var(--text);margin-bottom:10px;">${d.getMonth() + 1}月${d.getDate()}日（${wd}）</p>
+      ${dayStatsSummary(d)}
       ${renderDayFilterChips(state)}
       ${renderMultiDayTimeline([d], state.dayFilterTypes)}
     </div>`;
