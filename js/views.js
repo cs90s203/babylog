@@ -14,7 +14,7 @@ function fracOf(date) { return date.getHours() + date.getMinutes() / 60; }
 function milkColorOf(ev) { return (ev.breastMl > 0 && ev.formulaMl > 0) ? '#C77D52' : ((ev.formulaMl > 0) ? '#E8A33D' : '#FF8C6B'); }
 function dotColor(ev) { return ev.type === 'milk' ? milkColorOf(ev) : ev.type === 'poop' ? '#C8965A' : ev.type === 'brush' ? '#5BBFA0' : '#79C3F0'; }
 function tintBg(ev) { return ev.type === 'milk' ? ((ev.breastMl > 0 && ev.formulaMl > 0) ? 'var(--tMix)' : (ev.formulaMl > 0 ? 'var(--tMilkF)' : 'var(--tMilkB)')) : ev.type === 'poop' ? 'var(--tPoop)' : ev.type === 'brush' ? 'var(--tBrush)' : 'var(--tPee)'; }
-function emojiOf(t) { return t === 'milk' ? '🍼' : t === 'poop' ? '💩' : t === 'brush' ? '🪥' : '💧'; }
+function emojiOf(t) { return t === 'milk' ? '🍼' : t === 'poop' ? '💩' : t === 'brush' ? '👄' : '💧'; }
 // Baby profile avatar — a photo (compressed thumbnail, see App.handleAvatarFile) takes
 // precedence over the emoji when both are set. Tapping the circle opens the picker sheet.
 function babyAvatarInner(s, sizePx) {
@@ -63,7 +63,7 @@ function pawButtons() {
     { emoji: '🍼', bg: '#FCD0A1', shadow: 'rgba(252,208,161,.55)', attrs: `onclick="A.openMilk()"` },
     { emoji: '💩', bg: '#995D81', shadow: 'rgba(153,93,129,.4)', attrs: `onclick="A.tap('poop')" onpointerdown="A.startPress('poop')" onpointerup="A.endPress()" onpointerleave="A.endPress()"` },
     { emoji: '💧', bg: '#9BB1FF', shadow: 'rgba(155,177,255,.5)', attrs: `onclick="A.tap('pee')" onpointerdown="A.startPress('pee')" onpointerup="A.endPress()" onpointerleave="A.endPress()"` },
-    { emoji: '🪥', bg: '#9FE0D0', shadow: 'rgba(159,224,208,.5)', attrs: `onclick="A.tap('brush')" onpointerdown="A.startPress('brush')" onpointerup="A.endPress()" onpointerleave="A.endPress()"` },
+    { emoji: '👄', bg: '#9FE0D0', shadow: 'rgba(159,224,208,.5)', attrs: `onclick="A.tap('brush')" onpointerdown="A.startPress('brush')" onpointerup="A.endPress()" onpointerleave="A.endPress()"` },
   ];
   const n = items.length;
   return items.map((it, i) => {
@@ -954,7 +954,7 @@ function renderStats(state) {
 function renderRecords(state) {
   const filter = state.recordsFilter;
   const evs = Store.liveEvents().filter(e => filter === 'all' || e.type === filter).sort((a, b) => new Date(b.time) - new Date(a.time));
-  const chips = `<div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">${[['all', '全部'], ['milk', '🍼 喝奶'], ['poop', '💩 排便'], ['pee', '💧 尿尿'], ['brush', '🪥 刷牙']].map(([k, l]) => `<button onclick="A.set({recordsFilter:'${k}'})" style="padding:8px 14px;border:none;border-radius:12px;font-size:12.5px;font-weight:700;font-family:inherit;background:${filter === k ? 'var(--accent)' : 'var(--card2)'};color:${filter === k ? '#fff' : 'var(--text2)'};">${l}</button>`).join('')}</div>`;
+  const chips = `<div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">${[['all', '全部'], ['milk', '🍼 喝奶'], ['poop', '💩 排便'], ['pee', '💧 尿尿'], ['brush', '👄 刷牙']].map(([k, l]) => `<button onclick="A.set({recordsFilter:'${k}'})" style="padding:8px 14px;border:none;border-radius:12px;font-size:12.5px;font-weight:700;font-family:inherit;background:${filter === k ? 'var(--accent)' : 'var(--card2)'};color:${filter === k ? '#fff' : 'var(--text2)'};">${l}</button>`).join('')}</div>`;
   const row = (r) => {
     let label;
     if (r.type === 'milk') { const mix = r.breastMl > 0 && r.formulaMl > 0; label = '喝奶 ' + (mix ? (r.breastMl + '+' + r.formulaMl + 'ml ・混合') : ((r.amountMl || 0) + 'ml ・' + (r.formulaMl > 0 ? '配方乳' : '母乳'))); }
@@ -1187,7 +1187,7 @@ function renderMilkSheet(state, reopen) {
   </div>`;
 }
 function renderEditSheet(state, reopen) {
-  const label = { poop: '排便 💩', brush: '刷牙 🪥' }[state.recordType] || '尿尿 💧';
+  const label = { poop: '排便 💩', brush: '刷牙 👄' }[state.recordType] || '尿尿 💧';
   return `<div class="sheet-overlay" onclick="A.closeSheet()">
     <div class="sheet" onclick="event.stopPropagation()" onpointerdown="A.startSheetDrag(event)" style="${sheetAnim(reopen)}">
       <div class="sheet-handle"></div>
