@@ -732,6 +732,60 @@ function avgMlPerFeedAllTime() {
   const totalMl = milksValid.reduce((s, e) => s + (e.amountMl || 0), 0);
   return Math.round(totalMl / milksValid.length);
 }
+// Overnight sleep ESTIMATE — not an actual measurement, just "last feed of the previous
+// day" to "first feed of this day". Labeled "推估" everywhere it's shown, since a feeding
+// gap and actual sleep aren't the same thing (the baby could just be quietly awake) — this
+// is really only defensible for the overnight stretch specifically, where "no feed logged"
+// and "asleep" correlate closely regardless of age, unlike daytime naps (deliberately not
+// attempted here — an awake stretch between daytime feeds gets far more likely as the baby
+// gets older, so "gap = nap" stops being a safe assumption).
+// Returns a plain object: dayKey -> estimated hours (or absent if not computable, e.g. the
+// very first tracked day with no previous day to compare against).
+function nightSleepByDay() {
+  const milks = Store.liveEvents().filter(e => e.type === 'milk').sort((a, b) => new Date(a.time) - new Date(b.time));
+  const firstOfDay = {}, lastOfDay = {};
+  milks.forEach(e => {
+    const dk = dayKey(new Date(e.time));
+    if (!firstOfDay[dk] || new Date(e.time) < new Date(firstOfDay[dk])) firstOfDay[dk] = e.time;
+    if (!lastOfDay[dk] || new Date(e.time) > new Date(lastOfDay[dk])) lastOfDay[dk] = e.time;
+  });
+  const sleepByDay = {};
+  Object.keys(firstOfDay).forEach(dk => {
+    const d = dateFromKey(dk);
+    const prevKey = dayKey(new Date(d.getFullYear(), d.getMonth(), d.getDate() - 1));
+    if (!lastOfDay[prevKey]) return; // no previous day's data to bound the overnight stretch
+    const hours = (new Date(firstOfDay[dk]) - new Date(lastOfDay[prevKey])) / 3600000;
+    if (hours > 0) sleepByDay[dk] = hours;
+  });
+  return sleepByDay;
+}
+// Average overnight-sleep estimate for whichever days count as "complete" within [from,to]
+// (same validStatsDays rule the rest of this summary row already uses), so it's consistent
+// with the other averages sitting right next to it.
+function avgSleepHours(from, to, offset, sleepByDay) {
+  const validDays = validStatsDays(from, to, offset);
+  const vals = Object.keys(sleepByDay).filter(dk => validDays.has(dk)).map(dk => sleepByDay[dk]);
+  if (!vals.length) return null;
+  return vals.reduce((a, b) => a + b, 0) / vals.length;
+}
+// Per-bucket average (not sum — a "how many hours" total wouldn't mean anything summed
+// across days) for the sleep bar chart. Every calendar day in [from,to] with a computable
+// estimate contributes to whichever week/month/year bucket it falls in; today's overnight
+// estimate (last night, already fully in the past) is included same as any other day —
+// unlike the other charts' "exclude today" rule, which is about today's *own* activity
+// still being in progress, not something that applies to a stretch that already ended.
+function bucketizeSleep(range, offset, sleepByDay) {
+  const [from, to] = rangeBounds(range, offset);
+  const n = range === 'week' ? 7 : range === 'month' ? 5 : 12;
+  const sums = new Array(n).fill(0), counts = new Array(n).fill(0);
+  for (const d = new Date(from.getFullYear(), from.getMonth(), from.getDate()); d <= to; d.setDate(d.getDate() + 1)) {
+    const v = sleepByDay[dayKey(d)];
+    if (v == null) continue;
+    const idx = range === 'week' ? (d.getDay() + 6) % 7 : range === 'month' ? Math.min(4, Math.floor((d.getDate() - 1) / 7)) : d.getMonth();
+    sums[idx] += v; counts[idx]++;
+  }
+  return sums.map((s, i) => counts[i] ? Math.round(s / counts[i] * 10) / 10 : 0);
+}
 // Weekend vs weekday pattern — compares the average time of each day's FIRST milk feed
 // on Sat/Sun against Mon-Fri, across the baby's whole history (not scoped to the
 // currently-viewed week/month/year, since a real pattern needs many weeks of samples to
@@ -793,6 +847,9 @@ function renderFeedStats(state) {
     }
     if (n > 0) { const avgMin = totalMin / n; avgIntervalLabel = `${Math.floor(avgMin / 60)}h${Math.round(avgMin % 60)}m`; }
   }
+  const sleepByDay = nightSleepByDay();
+  const avgSleep = avgSleepHours(from, to, offset, sleepByDay);
+  const avgSleepLabel = avgSleep != null ? `${Math.floor(avgSleep)}h${Math.round((avgSleep % 1) * 60)}m` : '—';
 
   const rangeTabs = `<div class="seg" style="margin-bottom:6px;">${[['week', '本週'], ['month', '本月'], ['year', '本年']].map(([k, l]) => `<button class="${state.statsRange === k ? 'active' : ''}" onclick="A.setStatsRange('${k}')">${l}</button>`).join('')}</div>
     <p style="text-align:center;font-size:12px;color:var(--text2);font-weight:600;margin-bottom:14px;">${esc(statsPeriodLabel(range, offset))}</p>`;
@@ -801,7 +858,12 @@ function renderFeedStats(state) {
   const wp = weekdayPatternInsight();
   const wpVal = wp ? (Math.abs(wp.diffMin) < 5 ? '≈' : (wp.diffMin >= 0 ? '+' : '') + wp.diffMin + 'm') : '—';
   const wpLbl = !wp ? '假日規律(資料不足)' : Math.abs(wp.diffMin) < 5 ? '假日規律' : wp.diffMin >= 0 ? '假日較晚起' : '假日較早起';
-  const summary = `<div class="card" style="display:flex;padding:16px 4px;margin-bottom:14px;">${sStat(avgMl, '平均奶量/日')}${div}${sStat(wpVal, wpLbl)}${div}${sStat(avgIntervalLabel, '平均間隔(不含夜間)')}${div}${sStat(avgPoop, '平均排便/日')}${div}${sStat(avgPee, '平均尿尿/日')}</div>`;
+  // Two rows instead of one — six stats side by side got too cramped once sleep joined the
+  // other five. Sleep is a gap-based ESTIMATE, not an actual measurement (see
+  // nightSleepByDay), so its label says so rather than presenting it as equally precise.
+  const summaryRow1 = `<div style="display:flex;">${sStat(avgMl, '平均奶量/日')}${div}${sStat(avgSleepLabel, '平均睡眠(推估)')}${div}${sStat(wpVal, wpLbl)}</div>`;
+  const summaryRow2 = `<div style="display:flex;margin-top:14px;padding-top:14px;border-top:1px solid var(--line);">${sStat(avgIntervalLabel, '平均間隔(不含夜間)')}${div}${sStat(avgPoop, '平均排便/日')}${div}${sStat(avgPee, '平均尿尿/日')}</div>`;
+  const summary = `<div class="card" style="padding:16px 4px;margin-bottom:14px;">${summaryRow1}${summaryRow2}</div>`;
 
   const byMap = {};
   evs.forEach(e => { const k = e.by || '未命名'; if (!byMap[k]) byMap[k] = { milk: 0, diaper: 0 }; if (e.type === 'milk') byMap[k].milk++; else byMap[k].diaper++; });
@@ -859,11 +921,17 @@ function renderFeedStats(state) {
     </div>`).join('')}</div>
     <div style="display:flex;gap:14px;margin-top:12px;justify-content:center;">${[['var(--text)', '換尿布次數'], ['#C8965A', '排便'], ['#79C3F0', '尿尿']].map(([c, l]) => `<div style="display:flex;align-items:center;gap:4px;"><div style="width:9px;height:9px;border-radius:50%;background:${c};"></div><span style="font-size:11px;color:var(--text2);">${l}</span></div>`).join('')}</div>`);
 
+  const sleepBuckets = bucketizeSleep(range, offset, sleepByDay);
+  const sMax = Math.max(1, ...sleepBuckets);
+  const sleepChart = sCard(`睡眠時數 推估（${range === 'week' ? '每日' : range === 'month' ? '每週平均' : '每月平均'}）`,
+    `<div style="display:flex;align-items:flex-end;gap:6px;height:120px;">${sleepBuckets.map((v, i) => `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;"><div style="font-size:9px;color:var(--text3);font-weight:700;">${v ? v + 'h' : '—'}</div><div style="width:100%;height:${v ? Math.round(v / sMax * 86) + 6 : 2}px;background:linear-gradient(180deg,#9BB1FF,#7A94E8);border-radius:6px;"></div><div style="font-size:9px;color:var(--text2);font-weight:600;">${labels[i]}</div>${dateSubLabel(i)}</div>`).join('')}</div>
+    <p style="font-size:10px;color:var(--text3);margin-top:10px;text-align:center;">依「前一天最後一餐」到「當天第一餐」的間隔推估，僅供參考，不是實際睡眠紀錄</p>`);
+
   // Left/right swipe (see App.startStatsSwipe/endStatsSwipe) pages through weeks/months/
   // years — swipe left goes further back in time, matching the convention used by e.g.
   // Apple Health's weekly charts. Wraps all three charts together since they always show
   // the same period.
-  const swipeCharts = `<div onpointerdown="A.startStatsSwipe(event.clientX)">${milkChart}${amtChart}${diaperChart}</div>`;
+  const swipeCharts = `<div onpointerdown="A.startStatsSwipe(event.clientX)">${milkChart}${amtChart}${diaperChart}${sleepChart}</div>`;
 
   return rangeTabs + summary + caregiverCard + swipeCharts;
 }
@@ -1209,9 +1277,16 @@ function dayStatsSummary(d) {
   const avgMl = milks.length ? Math.round(totalMl / milks.length) : null;
   const poopCount = evs.filter(e => e.type === 'poop').length;
   const peeCount = evs.filter(e => e.type === 'pee').length;
+  // "That night" = the stretch ending in this day's first feed (last feed of the PREVIOUS
+  // day to this day's first feed) — see nightSleepByDay for why this is an estimate, not a
+  // measurement.
+  const sleepHrs = nightSleepByDay()[dk];
+  const sleepLabel = sleepHrs != null ? `${Math.floor(sleepHrs)}h${Math.round((sleepHrs % 1) * 60)}m` : '—';
   const stat = (val, lbl) => `<div style="flex:1;text-align:center;min-width:0;"><p style="font-size:17px;font-weight:800;line-height:1;color:var(--text);">${val}</p><p style="font-size:9px;color:var(--text2);font-weight:600;margin-top:2px;white-space:nowrap;">${lbl}</p></div>`;
   const div = `<div style="width:1px;background:var(--line);margin:0 2px;flex-shrink:0;"></div>`;
-  return `<div style="display:flex;background:var(--card2);border-radius:14px;padding:12px 4px;margin-bottom:12px;">${stat(totalMl, '總奶量ml')}${div}${stat(milks.length, '喝奶次數')}${div}${stat(poopCount, '排便次數')}${div}${stat(peeCount, '尿尿次數')}${div}${stat(avgMl ?? '—', '平均每餐ml')}</div>`;
+  const row1 = `<div style="display:flex;">${stat(totalMl, '總奶量ml')}${div}${stat(milks.length, '喝奶次數')}${div}${stat(avgMl ?? '—', '平均每餐ml')}</div>`;
+  const row2 = `<div style="display:flex;margin-top:12px;padding-top:12px;border-top:1px solid var(--line);">${stat(poopCount, '排便次數')}${div}${stat(peeCount, '尿尿次數')}${div}${stat(sleepLabel, '前一晚睡眠(推估)')}</div>`;
+  return `<div style="background:var(--card2);border-radius:14px;padding:12px 4px;margin-bottom:12px;">${row1}${row2}</div>`;
 }
 function renderRecords(state) {
   const cal = renderCalendar(state);
