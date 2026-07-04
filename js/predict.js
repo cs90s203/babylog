@@ -57,7 +57,10 @@ function validFeedDates(feeds, now) {
   return valid;
 }
 
-function predictNextFeed(events, alarmOffsetMinutes) {
+// asOf lets a caller reconstruct "what would this have predicted at some earlier moment"
+// (see analyzeTodayPredictionAccuracy) — defaults to the real current time for the live
+// home-screen prediction, where there's no earlier moment to pretend it is.
+function predictNextFeed(events, alarmOffsetMinutes, asOf) {
   const feeds = events.filter(e => e.type === 'milk').slice().sort((a, b) => new Date(a.time) - new Date(b.time));
   if (feeds.length < 2) return { status: 'collecting' };
 
@@ -65,7 +68,7 @@ function predictNextFeed(events, alarmOffsetMinutes) {
   const spanDays = (last - first) / 86400000;
   if (spanDays < MIN_DATA_DAYS) return { status: 'collecting' };
 
-  const now = new Date();
+  const now = asOf || new Date();
   const validDates = validFeedDates(feeds, now);
 
   // Group valid-date feeds by date to pull out each day's first/last feed time and totals.
@@ -186,7 +189,12 @@ function analyzeTodayPredictionAccuracy(events, alarmOffsetMinutes, babyBirthDat
   return todayFeeds.map(f => {
     const fTime = new Date(f.time);
     const before = events.filter(e => new Date(e.time) < fTime);
-    const pred = predictNextFeed(before, alarmOffsetMinutes);
+    // Reconstruct as of fTime, not the real current moment — without this, "minutes since
+    // the last feed" etc. inside predictNextFeed were measured against whenever someone
+    // happened to check the overlay, not against when this feed actually happened, which
+    // could force the wrong daypart bucket (usually 'night', the longest one) and produce
+    // a bogus predicted time completely unrelated to what the app would have shown live.
+    const pred = predictNextFeed(before, alarmOffsetMinutes, fTime);
     const predictedMl = predictNextAmount(before, babyBirthDate);
     const actualMl = f.amountMl || 0;
     if (pred.status !== 'ok') return { id: f.id, actualTime: fTime, actualMl, predictedTime: null, predictedMl, timeErrorMin: null, mlError: null };
