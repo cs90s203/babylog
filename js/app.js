@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.16.5';
+const APP_VERSION = '2.17.0';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -24,7 +24,11 @@ const App = {
     statsExpandedBar: null, // index of the tapped-open ml chart bar, or null
     growthMetric: 'weight',
     growthZoomed: true, // whether the growth chart is zoomed to "birth..current age+2m" or showing the full 0-24m span
-    recordsFilter: 'all',
+    calYear: new Date().getFullYear(),
+    calMonthNum: new Date().getMonth(), // 0-indexed, bounded between firstEventMonth() and the real current month
+    calExpandedDay: null, // dayKey string ('YYYY-MM-DD') of the day currently expanded below the calendar, or null
+    compareMode: false,
+    compareDays: [], // up to 4 dayKey strings, selected while compareMode is on
     editingId: null,
     editBy: '',
     confirmDelId: null,
@@ -113,6 +117,34 @@ const App = {
   goHome() { this.set({ screen: 'home', sheet: null }); },
   goStats() { this.set({ screen: 'stats', sheet: null }); },
   goRecords() { this.set({ screen: 'records', sheet: null }); },
+
+  // ---- records calendar ----
+  calPrevMonth() {
+    const first = firstEventMonth();
+    let y = this.state.calYear, m = this.state.calMonthNum - 1;
+    if (m < 0) { m = 11; y--; }
+    if (first && (y < first.y || (y === first.y && m < first.m))) return;
+    this.set({ calYear: y, calMonthNum: m, calExpandedDay: null });
+  },
+  calNextMonth() {
+    const now = new Date();
+    let y = this.state.calYear, m = this.state.calMonthNum + 1;
+    if (m > 11) { m = 0; y++; }
+    if (y > now.getFullYear() || (y === now.getFullYear() && m > now.getMonth())) return;
+    this.set({ calYear: y, calMonthNum: m, calExpandedDay: null });
+  },
+  // Same handler for both selecting a day on the calendar AND removing one from the
+  // compare-mode chip list (see renderRecords) — it's a plain toggle either way.
+  calTapDay(key) {
+    if (this.state.compareMode) {
+      const cur = this.state.compareDays;
+      if (cur.includes(key)) this.set({ compareDays: cur.filter(k => k !== key) });
+      else if (cur.length < 4) this.set({ compareDays: [...cur, key] });
+      return;
+    }
+    this.set({ calExpandedDay: this.state.calExpandedDay === key ? null : key });
+  },
+  toggleCompareMode() { this.set({ compareMode: !this.state.compareMode, compareDays: [], calExpandedDay: null }); },
   goConfig() { this.set({ screen: 'config', sheet: null }); },
   closeSheet() {
     if (this.state.sheet === 'growth') this.resetZoom();

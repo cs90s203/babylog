@@ -700,6 +700,32 @@ function validStatsDays(from, to, offset) {
   }
   return valid;
 }
+// Weekend vs weekday pattern — compares the average time of each day's FIRST milk feed
+// on Sat/Sun against Mon-Fri, across the baby's whole history (not scoped to the
+// currently-viewed week/month/year, since a real pattern needs many weeks of samples to
+// be meaningful). Excludes today (still in progress, would skew toward "started late").
+function weekdayPatternInsight() {
+  const milks = Store.liveEvents().filter(e => e.type === 'milk');
+  if (!milks.length) return null;
+  const todayKey = dayKey(new Date());
+  const firstFeedByDay = {};
+  milks.forEach(e => {
+    const t = new Date(e.time);
+    const k = dayKey(t);
+    if (k === todayKey) return;
+    if (!firstFeedByDay[k] || t < firstFeedByDay[k].time) firstFeedByDay[k] = { time: t, dow: t.getDay() };
+  });
+  const weekdayHrs = [], weekendHrs = [];
+  Object.values(firstFeedByDay).forEach(d => {
+    const hour = d.time.getHours() + d.time.getMinutes() / 60;
+    (d.dow === 0 || d.dow === 6 ? weekendHrs : weekdayHrs).push(hour);
+  });
+  // Require a handful of samples on both sides before claiming a pattern exists.
+  if (weekdayHrs.length < 3 || weekendHrs.length < 2) return null;
+  const avg = (arr) => arr.reduce((a, b) => a + b, 0) / arr.length;
+  const diffMin = Math.round((avg(weekendHrs) - avg(weekdayHrs)) * 60);
+  return { diffMin };
+}
 function renderFeedStats(state) {
   const range = state.statsRange;
   const offset = state.statsPeriodOffset || 0;
@@ -738,9 +764,12 @@ function renderFeedStats(state) {
 
   const rangeTabs = `<div class="seg" style="margin-bottom:6px;">${[['week', '本週'], ['month', '本月'], ['year', '本年']].map(([k, l]) => `<button class="${state.statsRange === k ? 'active' : ''}" onclick="A.setStatsRange('${k}')">${l}</button>`).join('')}</div>
     <p style="text-align:center;font-size:12px;color:var(--text2);font-weight:600;margin-bottom:14px;">${esc(statsPeriodLabel(range, offset))}</p>`;
-  const sStat = (val, lbl) => `<div style="flex:1;text-align:center;"><p style="font-size:17px;font-weight:800;color:var(--text);line-height:1;">${val}</p><p style="font-size:9.5px;color:var(--text2);font-weight:600;margin-top:3px;">${lbl}</p></div>`;
-  const div = `<div style="width:1px;background:var(--line);margin:0 2px;"></div>`;
-  const summary = `<div class="card" style="display:flex;padding:16px 6px;margin-bottom:14px;">${sStat(avgMl, '平均奶量/日')}${div}${sStat(avgIntervalLabel, '平均間隔(不含夜間)')}${div}${sStat(avgPoop, '平均排便/日')}${div}${sStat(avgPee, '平均尿尿/日')}</div>`;
+  const sStat = (val, lbl) => `<div style="flex:1;text-align:center;min-width:0;"><p style="font-size:15px;font-weight:800;color:var(--text);line-height:1;">${val}</p><p style="font-size:9px;color:var(--text2);font-weight:600;margin-top:3px;">${lbl}</p></div>`;
+  const div = `<div style="width:1px;background:var(--line);margin:0 2px;flex-shrink:0;"></div>`;
+  const wp = weekdayPatternInsight();
+  const wpVal = wp ? (Math.abs(wp.diffMin) < 5 ? '≈' : (wp.diffMin >= 0 ? '+' : '') + wp.diffMin + 'm') : '—';
+  const wpLbl = !wp ? '假日規律(資料不足)' : Math.abs(wp.diffMin) < 5 ? '假日規律' : wp.diffMin >= 0 ? '假日較晚起' : '假日較早起';
+  const summary = `<div class="card" style="display:flex;padding:16px 4px;margin-bottom:14px;">${sStat(avgMl, '平均奶量/日')}${div}${sStat(wpVal, wpLbl)}${div}${sStat(avgIntervalLabel, '平均間隔(不含夜間)')}${div}${sStat(avgPoop, '平均排便/日')}${div}${sStat(avgPee, '平均尿尿/日')}</div>`;
 
   const byMap = {};
   evs.forEach(e => { const k = e.by || '未命名'; if (!byMap[k]) byMap[k] = { milk: 0, diaper: 0 }; if (e.type === 'milk') byMap[k].milk++; else byMap[k].diaper++; });
@@ -950,26 +979,165 @@ function renderStats(state) {
   </div>`;
 }
 
-// ============================= RECORDS =============================
+// ============================= RECORDS (calendar) =============================
+// "YYYY-MM-DD" -> local Date at midnight. Plain `new Date(key)` parses that format as
+// UTC midnight, which silently shifts every day back by a few hours in any timezone
+// ahead of UTC — this is the local-safe equivalent of dayKey() in reverse.
+function dateFromKey(key) {
+  const [y, m, d] = key.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+function firstEventMonth() {
+  const all = Store.liveEvents();
+  if (!all.length) return null;
+  const earliest = new Date(Math.min(...all.map(e => new Date(e.time).getTime())));
+  return { y: earliest.getFullYear(), m: earliest.getMonth() };
+}
+// dayKey -> event count within that calendar month, for the heatmap circle behind each
+// day number (see renderCalendar) — count (not ml) so a day full of only diaper changes
+// still shows up, not just milk-heavy days.
+function monthActivityMap(y, m) {
+  const map = {};
+  const start = new Date(y, m, 1), end = new Date(y, m + 1, 0, 23, 59, 59, 999);
+  Store.liveEvents().forEach(e => {
+    const t = new Date(e.time);
+    if (t < start || t > end) return;
+    const k = dayKey(t);
+    map[k] = (map[k] || 0) + 1;
+  });
+  return map;
+}
+function renderCalendar(state) {
+  const y = state.calYear, m = state.calMonthNum;
+  const first = firstEventMonth();
+  const now = new Date();
+  const atMin = !!first && y === first.y && m === first.m;
+  const atMax = y === now.getFullYear() && m === now.getMonth();
+  const activity = monthActivityMap(y, m);
+  const maxCount = Math.max(1, ...Object.values(activity), 0);
+  const startDow = new Date(y, m, 1).getDay(); // 0 = Sunday
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  const todayKey = dayKey(now);
+  const cells = [];
+  for (let i = 0; i < startDow; i++) cells.push('<div></div>');
+  for (let d = 1; d <= daysInMonth; d++) {
+    const key = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    const count = activity[key] || 0;
+    const hasData = count > 0;
+    const isToday = key === todayKey;
+    const selected = state.compareMode ? state.compareDays.includes(key) : state.calExpandedDay === key;
+    // Heatmap intensity — floor at .28 so even a single-event day is still visibly marked,
+    // not just barely-there. --accent is the same #F0A500 in both themes, so it's safe to
+    // blend as a literal rgba() here rather than reaching for CSS color-mix() (patchier
+    // support on older iOS Safari).
+    const intensity = hasData ? 0.28 + 0.62 * (count / maxCount) : 0;
+    const circleBg = hasData ? `background:rgba(240,165,0,${intensity.toFixed(2)});` : 'background:transparent;';
+    const ring = selected ? 'box-shadow:0 0 0 2px var(--accent);' : (isToday ? 'box-shadow:0 0 0 1.5px var(--text3);' : '');
+    cells.push(`<button onclick="A.calTapDay('${key}')" ${hasData ? '' : 'disabled'} style="aspect-ratio:1;border:none;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;font-family:inherit;color:${hasData ? 'var(--text)' : 'var(--text3)'};${circleBg}${ring}cursor:${hasData ? 'pointer' : 'default'};">${d}</button>`);
+  }
+  const wd = ['日', '一', '二', '三', '四', '五', '六'];
+  const wdRow = `<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:8px;">${wd.map(w => `<div style="text-align:center;font-size:11px;color:var(--text3);font-weight:700;">${w}</div>`).join('')}</div>`;
+  const grid = `<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px;">${cells.join('')}</div>`;
+  const header = `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+    <button onclick="A.calPrevMonth()" ${atMin ? 'disabled' : ''} style="width:32px;height:32px;border-radius:50%;background:var(--card2);border:none;font-size:15px;font-weight:700;color:var(--text);opacity:${atMin ? 0.35 : 1};">‹</button>
+    <p style="font-size:16px;font-weight:800;color:var(--text);">${y}年${m + 1}月</p>
+    <button onclick="A.calNextMonth()" ${atMax ? 'disabled' : ''} style="width:32px;height:32px;border-radius:50%;background:var(--card2);border:none;font-size:15px;font-weight:700;color:var(--text);opacity:${atMax ? 0.35 : 1};">›</button>
+  </div>`;
+  return `<div class="card" style="padding:16px;margin-bottom:14px;">${header}${wdRow}${grid}</div>`;
+}
+
+const DAY_PX_PER_HOUR = 32;
+// Shared "linear, uncompressed" day timeline: 1 date -> the single-day expand panel, 2-4
+// dates -> the compare panel. Every date is scaled against the exact same 24h axis (no
+// gap-collapsing, no cluster push-down like the home timeline) so multiple days stay
+// directly comparable at a glance — what happened at 3am lines up at the same height across
+// every column. Column content shrinks in three steps as more days share the width: full
+// chip label -> emoji+amount only -> emoji only.
+function renderMultiDayTimeline(dates) {
+  const totalH = 24 * DAY_PX_PER_HOUR;
+  const n = dates.length;
+  const level = n <= 1 ? 0 : n === 2 ? 1 : 2;
+  const gutterW = 28;
+  const now = new Date();
+  const gridlines = [];
+  for (let h = 0; h <= 24; h++) {
+    const y = h * DAY_PX_PER_HOUR;
+    gridlines.push(`<div style="position:absolute;left:${gutterW}px;right:0;top:${y}px;height:1px;background:var(--grid);"></div>`);
+    if (h < 24) gridlines.push(`<div style="position:absolute;left:0;width:${gutterW - 6}px;text-align:right;top:${y - 6}px;font-size:9px;color:var(--text3);font-weight:700;">${pad2(h)}</div>`);
+  }
+  const lanes = dates.map(d => {
+    const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const dk = dayKey(dayStart);
+    const evs = Store.liveEvents().filter(e => dayKey(new Date(e.time)) === dk).sort((a, b) => new Date(a.time) - new Date(b.time));
+    // Only truly-simultaneous entries (within 3 minutes) get grouped onto one row, so a
+    // diaper change logged as both pee+poop doesn't draw two overlapping chips — this is
+    // NOT the home timeline's gap-collapsing/push-down, just avoiding drawing directly on
+    // top of itself; every group still sits at its own real average time, nothing is
+    // rearranged to make room.
+    const groups = [];
+    evs.forEach(e => {
+      const t = new Date(e.time).getTime();
+      const last = groups[groups.length - 1];
+      if (last && Math.abs(t - last.t) <= 3 * 60000) { last.items.push(e); last.t = (last.t + t) / 2; }
+      else groups.push({ t, items: [e] });
+    });
+    const rowsHtml = groups.map(g => {
+      const t = new Date(g.t);
+      const y = (t.getHours() + t.getMinutes() / 60) * DAY_PX_PER_HOUR;
+      const itemsHtml = g.items.map(e => {
+        if (level === 2) return `<span onclick='A.openEditRec(${JSON.stringify(e).replace(/'/g, "&#39;")})' style="font-size:13px;cursor:pointer;">${emojiOf(e.type)}</span>`;
+        const amt = e.type === 'milk' ? ((e.formulaMl > 0 ? e.formulaMl : e.breastMl) + (e.breastMl > 0 && e.formulaMl > 0 ? '+' + e.breastMl : '')) + 'ml' : '';
+        const full = { poop: '排便', pee: '尿尿', brush: '刷牙' }[e.type] || '';
+        const label = level === 1 ? (amt || full) : [amt, full].filter(Boolean).join(' ');
+        return `<div onclick='A.openEditRec(${JSON.stringify(e).replace(/'/g, "&#39;")})' style="display:inline-flex;align-items:center;gap:3px;background:${tintBg(e)};border-radius:8px;padding:2px 6px;font-size:${level === 1 ? 10 : 11}px;font-weight:700;color:var(--text);white-space:nowrap;cursor:pointer;box-shadow:0 1px 3px var(--shadow);margin:1px;">${emojiOf(e.type)}${label ? `<span>${label}</span>` : ''}</div>`;
+      }).join('');
+      return `<div style="position:absolute;left:0;right:0;top:${y - 8}px;display:flex;flex-wrap:wrap;align-items:center;">${itemsHtml}</div>`;
+    }).join('');
+    const isToday = dk === dayKey(now);
+    const nowLine = isToday ? `<div style="position:absolute;left:0;right:0;top:${(now.getHours() + now.getMinutes() / 60) * DAY_PX_PER_HOUR}px;height:1.5px;background:var(--accent);z-index:2;"></div>` : '';
+    const header = `<div style="text-align:center;font-size:${n > 2 ? 10.5 : 12}px;font-weight:800;color:var(--text);">${dayStart.getMonth() + 1}/${dayStart.getDate()}<span style="color:var(--text3);font-weight:600;"> (${['日', '一', '二', '三', '四', '五', '六'][dayStart.getDay()]})</span></div>`;
+    return { header, body: `<div style="flex:1;min-width:0;position:relative;">${rowsHtml}${nowLine}</div>` };
+  });
+  const headerRow = `<div style="display:flex;padding-left:${gutterW + 6}px;gap:6px;margin-bottom:6px;">${lanes.map(l => `<div style="flex:1;min-width:0;">${l.header}</div>`).join('')}</div>`;
+  return `<div>
+    ${headerRow}
+    <div style="position:relative;height:${totalH}px;">
+      ${gridlines.join('')}
+      <div style="position:absolute;top:0;left:${gutterW + 6}px;right:0;bottom:0;display:flex;gap:6px;">${lanes.map(l => l.body).join('')}</div>
+    </div>
+  </div>`;
+}
+
 function renderRecords(state) {
-  const filter = state.recordsFilter;
-  const evs = Store.liveEvents().filter(e => filter === 'all' || e.type === filter).sort((a, b) => new Date(b.time) - new Date(a.time));
-  const chips = `<div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">${[['all', '全部'], ['milk', '🍼 喝奶'], ['poop', '💩 排便'], ['pee', '💧 尿尿'], ['brush', '👄 刷牙']].map(([k, l]) => `<button onclick="A.set({recordsFilter:'${k}'})" style="padding:8px 14px;border:none;border-radius:12px;font-size:12.5px;font-weight:700;font-family:inherit;background:${filter === k ? 'var(--accent)' : 'var(--card2)'};color:${filter === k ? '#fff' : 'var(--text2)'};">${l}</button>`).join('')}</div>`;
-  const row = (r) => {
-    let label;
-    if (r.type === 'milk') { const mix = r.breastMl > 0 && r.formulaMl > 0; label = '喝奶 ' + (mix ? (r.breastMl + '+' + r.formulaMl + 'ml ・混合') : ((r.amountMl || 0) + 'ml ・' + (r.formulaMl > 0 ? '配方乳' : '母乳'))); }
-    else label = { poop: '排便', pee: '尿尿', brush: '刷牙' }[r.type];
-    const d = new Date(r.time);
-    return `<div onclick='A.openEditRec(${JSON.stringify(r).replace(/'/g, "&#39;")})' style="display:flex;align-items:center;gap:12px;padding:13px 14px;border-bottom:1px solid var(--line);cursor:pointer;">
-      <div style="width:40px;height:40px;border-radius:13px;background:${tintBg(r)};display:flex;align-items:center;justify-content:center;font-size:19px;flex-shrink:0;">${emojiOf(r.type)}</div>
-      <div style="flex:1;"><p style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:1px;">${label}</p><p style="font-size:12px;color:var(--text2);">${d.toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric' })} ${hm(d)} · ${esc(r.by || '未命名')}</p></div>
-      <svg width="7" height="12" viewBox="0 0 7 12" fill="none"><path d="M1 1l5 5-5 5" stroke="var(--text3)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  const cal = renderCalendar(state);
+  const toggleBtn = `<button onclick="A.toggleCompareMode()" style="font-size:12.5px;font-weight:700;font-family:inherit;color:${state.compareMode ? '#fff' : 'var(--text2)'};background:${state.compareMode ? 'var(--accent)' : 'var(--card2)'};border:none;border-radius:12px;padding:8px 14px;">📊 比較</button>`;
+  let panel = '';
+  if (state.compareMode) {
+    const days = state.compareDays;
+    const chips = days.map(k => {
+      const d = dateFromKey(k);
+      return `<div style="display:flex;align-items:center;gap:5px;background:var(--card2);border-radius:10px;padding:5px 6px 5px 10px;font-size:12px;font-weight:700;color:var(--text);">${d.getMonth() + 1}/${d.getDate()}<span onclick="A.calTapDay('${k}')" style="cursor:pointer;color:var(--text3);padding:0 3px;">✕</span></div>`;
+    }).join('');
+    const bar = `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">${chips || `<span style="font-size:12.5px;color:var(--text3);">點選日曆上的日子來比較（最多4天）</span>`}</div>
     </div>`;
-  };
-  const list = evs.length ? `<div class="card" style="overflow:hidden;">${evs.map(row).join('')}</div>` : `<div style="text-align:center;padding:48px 0;color:var(--text3);font-size:13px;">沒有符合的紀錄</div>`;
+    const cmp = days.length ? `<div class="card" style="padding:16px;overflow-x:auto;">${renderMultiDayTimeline(days.map(dateFromKey))}</div>` : '';
+    panel = `${bar}${cmp}`;
+  } else if (state.calExpandedDay) {
+    const d = dateFromKey(state.calExpandedDay);
+    const wd = ['日', '一', '二', '三', '四', '五', '六'][d.getDay()];
+    panel = `<div class="card" style="padding:16px;">
+      <p style="font-size:15px;font-weight:800;color:var(--text);margin-bottom:10px;">${d.getMonth() + 1}月${d.getDate()}日（${wd}）</p>
+      ${renderMultiDayTimeline([d])}
+    </div>`;
+  }
   return `<div class="ns" style="flex:1;min-height:0;padding-bottom:78px;">
     ${headerBar('紀錄')}
-    <div style="padding:8px 16px 0;">${chips}${list}</div>
+    <div style="padding:8px 16px 0;">
+      <div style="display:flex;justify-content:flex-end;margin-bottom:10px;">${toggleBtn}</div>
+      ${cal}
+      ${panel}
+    </div>
   </div>`;
 }
 
