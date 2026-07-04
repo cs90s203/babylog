@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.17.2';
+const APP_VERSION = '2.18.0';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -29,6 +29,7 @@ const App = {
     calExpandedDay: null, // dayKey string ('YYYY-MM-DD') of the day currently expanded below the calendar, or null
     compareMode: false,
     compareDays: [], // up to 4 dayKey strings, selected while compareMode is on
+    dayFilterTypes: ['milk', 'poop', 'pee', 'brush'], // which event types renderMultiDayTimeline shows — shared by the single-day expand panel and compare mode
     editingId: null,
     editBy: '',
     confirmDelId: null,
@@ -145,6 +146,10 @@ const App = {
     this.set({ calExpandedDay: this.state.calExpandedDay === key ? null : key });
   },
   toggleCompareMode() { this.set({ compareMode: !this.state.compareMode, compareDays: [], calExpandedDay: null }); },
+  toggleDayFilterType(type) {
+    const cur = this.state.dayFilterTypes;
+    this.set({ dayFilterTypes: cur.includes(type) ? cur.filter(t => t !== type) : [...cur, type] });
+  },
   goConfig() { this.set({ screen: 'config', sheet: null }); },
   closeSheet() {
     if (this.state.sheet === 'growth') this.resetZoom();

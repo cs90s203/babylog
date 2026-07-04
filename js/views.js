@@ -1060,14 +1060,14 @@ function hexToRgb(hex) {
   return `${parseInt(h.substring(0, 2), 16)},${parseInt(h.substring(2, 4), 16)},${parseInt(h.substring(4, 6), 16)}`;
 }
 const DAY_PX_PER_HOUR = 32;
-const HEAT_BUCKET_MIN = 10; // heatmap band granularity for renderMultiDayTimeline
+const HEAT_BUCKET_MIN = 15; // heatmap band granularity for renderMultiDayTimeline
 // Shared "linear, uncompressed" day timeline: 1 date -> the single-day expand panel, 2-4
 // dates -> the compare panel. Every date is scaled against the exact same 24h axis (no
 // gap-collapsing, no cluster push-down like the home timeline) so multiple days stay
 // directly comparable at a glance — what happened at 3am lines up at the same height across
 // every column. Column content shrinks in three steps as more days share the width: full
 // chip label -> emoji+amount only -> emoji only.
-function renderMultiDayTimeline(dates) {
+function renderMultiDayTimeline(dates, activeTypes) {
   const totalH = 24 * DAY_PX_PER_HOUR;
   const n = dates.length;
   const level = n <= 1 ? 0 : n === 2 ? 1 : 2;
@@ -1082,7 +1082,7 @@ function renderMultiDayTimeline(dates) {
   const lanes = dates.map(d => {
     const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate());
     const dk = dayKey(dayStart);
-    const evs = Store.liveEvents().filter(e => dayKey(new Date(e.time)) === dk).sort((a, b) => new Date(a.time) - new Date(b.time));
+    const evs = Store.liveEvents().filter(e => dayKey(new Date(e.time)) === dk && activeTypes.includes(e.type)).sort((a, b) => new Date(a.time) - new Date(b.time));
     // Only truly-simultaneous entries (within 3 minutes) get grouped onto one row, so a
     // diaper change logged as both pee+poop doesn't draw two overlapping chips — this is
     // NOT the home timeline's gap-collapsing/push-down, just avoiding drawing directly on
@@ -1095,11 +1095,11 @@ function renderMultiDayTimeline(dates) {
       if (last && Math.abs(t - last.t) <= 3 * 60000) { last.items.push(e); last.t = (last.t + t) / 2; }
       else groups.push({ t, items: [e] });
     });
-    // Density heatmap bands — one per (10-min bucket, color) pair present that day, each a
-    // full-width band that fades to transparent at its own top/bottom edge (same color, only
-    // the alpha changes, so overlapping bands from different event types blend naturally
-    // instead of fighting for a "correct" blended color). Darker = more events crammed into
-    // that same 10 minutes. Drawn first so the chips/dots above always paint over it.
+    // Density heatmap bands — one per (15-min bucket, color) pair present that day, each a
+    // flat full-width band (no fade — tried a soft fade-in/out first, but a flat block per
+    // bucket reads more clearly as "this slot happened" at this granularity). Darker = more
+    // events crammed into that same 15 minutes. Drawn first so the chips/dots above always
+    // paint over it.
     const slotPxH = DAY_PX_PER_HOUR * HEAT_BUCKET_MIN / 60;
     const slots = {};
     evs.forEach(e => {
@@ -1109,20 +1109,13 @@ function renderMultiDayTimeline(dates) {
       if (!slots[idx]) slots[idx] = {};
       slots[idx][c] = (slots[idx][c] || 0) + 1;
     });
-    // A band drawn at exactly its own 10-min slot height (~5px) squeezes the fade-in/fade-out
-    // into a couple of pixels each — indistinguishable from a flat, hard-edged line rather
-    // than a soft glow. Render each band several slots tall, centered on its real bucket, so
-    // the 3-stop alpha gradient actually has room to read as a blur; overlapping bands from
-    // adjacent buckets (same or different colors) blend further via ordinary alpha stacking.
-    const bandH = slotPxH * 5;
     const heatHtml = Object.keys(slots).map(idxStr => {
       const idx = parseInt(idxStr, 10);
-      const yCenter = idx * slotPxH + slotPxH / 2;
-      const y0 = yCenter - bandH / 2;
+      const y0 = idx * slotPxH;
       return Object.entries(slots[idx]).map(([colorHex, count]) => {
         const rgb = hexToRgb(colorHex);
         const alpha = Math.min(0.6, 0.22 + 0.14 * (count - 1));
-        return `<div style="position:absolute;left:0;right:0;top:${y0}px;height:${bandH}px;background:linear-gradient(to bottom, rgba(${rgb},0) 0%, rgba(${rgb},${alpha.toFixed(2)}) 50%, rgba(${rgb},0) 100%);pointer-events:none;"></div>`;
+        return `<div style="position:absolute;left:0;right:0;top:${y0}px;height:${slotPxH}px;background:rgba(${rgb},${alpha.toFixed(2)});pointer-events:none;"></div>`;
       }).join('');
     }).join('');
     const rowsHtml = groups.map(g => {
@@ -1152,6 +1145,17 @@ function renderMultiDayTimeline(dates) {
   </div>`;
 }
 
+// Shared by the single-day expand panel and the compare panel — which event types
+// renderMultiDayTimeline should show. Independently toggle-able, not a single-select
+// (you might want e.g. just 喝奶+排便 visible at once).
+function renderDayFilterChips(state) {
+  const items = [['milk', '🍼 喝奶'], ['poop', '💩 排便'], ['pee', '💧 尿尿'], ['brush', '👄 刷牙']];
+  const chips = items.map(([k, l]) => {
+    const on = state.dayFilterTypes.includes(k);
+    return `<button onclick="A.toggleDayFilterType('${k}')" style="padding:6px 12px;border:none;border-radius:11px;font-size:12px;font-weight:700;font-family:inherit;background:${on ? 'var(--card2)' : 'transparent'};color:${on ? 'var(--text)' : 'var(--text3)'};opacity:${on ? 1 : .55};">${l}</button>`;
+  }).join('');
+  return `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">${chips}</div>`;
+}
 function renderRecords(state) {
   const cal = renderCalendar(state);
   const toggleBtn = `<button onclick="A.toggleCompareMode()" style="font-size:12.5px;font-weight:700;font-family:inherit;color:${state.compareMode ? '#fff' : 'var(--text2)'};background:${state.compareMode ? 'var(--accent)' : 'var(--card2)'};border:none;border-radius:12px;padding:8px 14px;">📊 比較</button>`;
@@ -1165,14 +1169,15 @@ function renderRecords(state) {
     const bar = `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
       <div style="display:flex;gap:6px;flex-wrap:wrap;">${chips || `<span style="font-size:12.5px;color:var(--text3);">點選日曆上的日子來比較（最多4天）</span>`}</div>
     </div>`;
-    const cmp = days.length ? `<div class="card" style="padding:16px;overflow-x:auto;">${renderMultiDayTimeline(days.map(dateFromKey))}</div>` : '';
+    const cmp = days.length ? `<div class="card" style="padding:16px;overflow-x:auto;">${renderDayFilterChips(state)}${renderMultiDayTimeline(days.map(dateFromKey), state.dayFilterTypes)}</div>` : '';
     panel = `${bar}${cmp}`;
   } else if (state.calExpandedDay) {
     const d = dateFromKey(state.calExpandedDay);
     const wd = ['日', '一', '二', '三', '四', '五', '六'][d.getDay()];
     panel = `<div class="card" style="padding:16px;">
       <p style="font-size:15px;font-weight:800;color:var(--text);margin-bottom:10px;">${d.getMonth() + 1}月${d.getDate()}日（${wd}）</p>
-      ${renderMultiDayTimeline([d])}
+      ${renderDayFilterChips(state)}
+      ${renderMultiDayTimeline([d], state.dayFilterTypes)}
     </div>`;
   }
   return `<div class="ns" style="flex:1;min-height:0;padding-bottom:78px;">
