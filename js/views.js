@@ -1036,7 +1036,11 @@ function renderCalendar(state) {
     // bar chart, not --accent — see NAV_ACTIVE_COLOR's comment for why the app has two
     // accent colors now.
     const intensity = hasData ? 0.28 + 0.62 * (count / maxCount) : 0;
-    const circleBg = hasData ? `background:rgba(255,140,107,${intensity.toFixed(2)});` : 'background:transparent;';
+    // Selected days get an extra radial layer painted first (so it sits on top of the
+    // coral heat fill) — gold at the outer edge, fading to transparent toward the center,
+    // so the selection ring reads as glowing inward rather than just a flat outline.
+    const selectedGlow = selected ? 'radial-gradient(circle, transparent 55%, rgba(240,165,0,.4) 100%), ' : '';
+    const circleBg = hasData ? `background:${selectedGlow}rgba(255,140,107,${intensity.toFixed(2)});` : 'background:transparent;';
     const ring = selected ? 'box-shadow:0 0 0 2px var(--accent);' : (isToday ? 'box-shadow:0 0 0 1.5px var(--text3);' : '');
     cells.push(`<button onclick="A.calTapDay('${key}')" ${hasData ? '' : 'disabled'} style="aspect-ratio:1;border:none;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;font-family:inherit;color:${hasData ? 'var(--text)' : 'var(--text3)'};${circleBg}${ring}cursor:${hasData ? 'pointer' : 'default'};">${d}</button>`);
   }
