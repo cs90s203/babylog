@@ -501,8 +501,12 @@ function renderTodayTimeline(state) {
       if (p < startH - 1e-6 || p > endH + 1e-6) return;
       if (inCollapsedSeg(p)) return;
       const y = yOfAdjusted(p);
+      // Right-aligned, same column as the actual-row's error text (not the left side, where
+      // it would sit underneath/behind the opaque chip row whenever a predicted time lands
+      // close to real events) — z-index 1 so it yields to that error text (z-index 2) on the
+      // rare occasion both land on the same row.
       nodes += `<div style="position:absolute;left:${axisX - 3}px;top:${y - 4}px;width:8px;height:8px;border-radius:50%;border:1.5px dashed var(--text3);background:transparent;z-index:1;"></div>
-        <div style="position:absolute;left:${axisX + 14}px;right:4px;top:${y - 7}px;font-size:9.5px;color:var(--text3);white-space:nowrap;z-index:1;">┄ 預測 ${hm(acc.predictedTime)}${acc.predictedMl != null ? '・' + acc.predictedMl + 'ml' : ''}</div>`;
+        <div style="position:absolute;right:4px;top:${y - 6}px;text-align:right;font-size:9px;color:var(--text3);white-space:nowrap;z-index:1;">┄ 預測 ${hm(acc.predictedTime)}${acc.predictedMl != null ? '・' + acc.predictedMl + 'ml' : ''}</div>`;
     });
   }
   if (dragEv) {
