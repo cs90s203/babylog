@@ -109,7 +109,12 @@ button { cursor: pointer; }
 .toast-wrap { position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: center; z-index: 100; }
 .chip {
   display: inline-flex; align-items: center; gap: 6px; padding: 6px 11px; border-radius: 12px;
-  cursor: grab; touch-action: none; font-size: 13px; font-weight: 700; color: var(--text);
+  /* touch-action was `none` (fully handled by JS, for the long-press drag-to-reposition
+     gesture) — trying `pan-y` instead so a finger starting directly on a chip can still
+     scroll the page, at the cost of the browser sometimes grabbing an early vertical
+     wiggle as "scrolling" before the long-press timer decides it's a drag. Revert to
+     `none` if that makes drag-to-reposition too unreliable in practice. */
+  cursor: grab; touch-action: pan-y; font-size: 13px; font-weight: 700; color: var(--text);
   white-space: nowrap; box-shadow: 0 1px 3px var(--shadow);
   -webkit-touch-callout: none; /* iOS: suppresses the long-press callout (copy/look up/
                                    share menu) that was popping up instead of our drag */
