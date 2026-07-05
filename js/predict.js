@@ -5,6 +5,7 @@
 // docs/prediction.md for rationale and remaining extension ideas.
 
 const N_RECENT = 8; // how many recent intervals (per bucket) to consider
+const RECENT_DAYS = 14; // how many recent valid days feed into typicalFirstHour/typicalLastHour — kept in sync with N_RECENT's own recency so the two don't drift apart as sleep patterns slowly change (e.g. typicalFirstHour lagging behind an already-longer recent night stretch)
 const MIN_DATA_DAYS = 2; // need at least this many days of feed history before predicting
 const PREDICT_EARLY_HOUR = 6; // a first tracking day only counts as "complete" if logging started before this hour — same rule as the stats page's validStatsDays() (separate constant name — classic <script> tags share one global scope, so this can't reuse views.js's EARLY_HOUR)
 
@@ -78,9 +79,13 @@ function predictNextFeed(events, alarmOffsetMinutes, asOf) {
     if (!validDates.has(dk)) return;
     (byDate[dk] = byDate[dk] || []).push(f);
   });
+  // byDate's keys are insertion-ordered (dateKey isn't a pure-digit string, so JS doesn't
+  // reorder them numerically) and feeds were sorted ascending before grouping, so this is
+  // already chronological — slicing the tail gives the most recent RECENT_DAYS valid days.
+  const dayEntries = Object.values(byDate).slice(-RECENT_DAYS);
   const firstHours = [], lastHours = [];
   let totalMl = 0, totalFeeds = 0;
-  Object.values(byDate).forEach(dayFeeds => {
+  dayEntries.forEach(dayFeeds => {
     const f0 = new Date(dayFeeds[0].time), fN = new Date(dayFeeds[dayFeeds.length - 1].time);
     firstHours.push(f0.getHours() + f0.getMinutes() / 60);
     lastHours.push(fN.getHours() + fN.getMinutes() / 60);
@@ -89,7 +94,7 @@ function predictNextFeed(events, alarmOffsetMinutes, asOf) {
   });
   const typicalFirstHour = median(firstHours);
   const typicalLastHour = median(lastHours); // also doubles as "usual last feed before bed"
-  const validDayCount = Object.keys(byDate).length;
+  const validDayCount = dayEntries.length;
   const avgMlPerDay = validDayCount ? Math.round(totalMl / validDayCount) : null;
   const avgFeedsPerDay = validDayCount ? Math.round((totalFeeds / validDayCount) * 10) / 10 : null;
 
@@ -112,30 +117,37 @@ function predictNextFeed(events, alarmOffsetMinutes, asOf) {
   const lastFeedTime = new Date(feeds[feeds.length - 1].time);
   let nextTime, medianMin = null, usedBucket = null;
 
+  // Whether the last feed was itself already at/past the household's usual last-feed-of-
+  // the-day hour is a fixed fact the moment that feed was logged, so this stays stable no
+  // matter when you look at it afterward (unlike using elapsed real time, which used to
+  // make the same data flip-flop between buckets purely depending on when you checked).
+  const lastFeedHour = lastFeedTime.getHours() + lastFeedTime.getMinutes() / 60;
+  const lastFeedBucket = bucketOf(lastFeedTime, lastFeedTime);
+  const pastBedtime = typicalLastHour != null && bucketMedian.night != null && lastFeedHour >= typicalLastHour;
+  // The night stretch's own projected end time (last feed + this household's recent night
+  // interval), when knowable — used below to decide when it's fair to stop extrapolating
+  // from the night bucket and switch to "no feed yet today" reasoning instead.
+  const nightProjection = pastBedtime && bucketMedian.night != null
+    ? new Date(lastFeedTime.getTime() + bucketMedian.night * 60000) : null;
+
   // No feed logged yet today: extrapolating from last night's last feed via the night
   // median tends to overshoot past when this baby usually wakes for its first feed —
-  // anchor to the learned typical first-feed clock time instead.
-  const noFeedToday = dateKey(lastFeedTime) !== dateKey(now);
-  if (noFeedToday && typicalFirstHour != null) {
+  // anchor to the learned typical first-feed clock time instead. Gated on the night
+  // stretch's own projected end (nightProjection) rather than the calendar date alone —
+  // otherwise the mere act of the clock crossing midnight mid-stretch, with zero new
+  // data, used to cause a discontinuous jump to a completely different estimate.
+  const overdueForNight = nightProjection != null ? now >= nightProjection : dateKey(lastFeedTime) !== dateKey(now);
+  if (overdueForNight && typicalFirstHour != null) {
     const h = Math.floor(typicalFirstHour), m = Math.round((typicalFirstHour % 1) * 60);
-    const candidate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m);
+    let candidate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m);
+    // Never predict a first-feed-of-day time earlier than the point the night stretch is
+    // itself expected to end — otherwise a long typical night vs. an early typicalFirstHour
+    // could produce a candidate that's already in the past by the time this branch fires.
+    if (nightProjection != null && candidate < nightProjection) candidate = nightProjection;
     if (candidate > lastFeedTime) { nextTime = candidate; usedBucket = 'typicalFirst'; }
   }
 
   if (!nextTime) {
-    // Which bucket to project forward from is decided ENTIRELY from facts about the last
-    // feed itself (its own clock hour) — not from how much real time has elapsed since,
-    // which used to make the same underlying data produce a different answer purely
-    // depending on when you happened to check. E.g. checking at 22:00 (usedBucket
-    // 'evening', -> 23:30) vs 22:40 with no new feed logged (elapsed time alone tipped
-    // "overdue" and switched to 'night', -> 00:40) — a discontinuous jump with no new
-    // information behind it. Whether the last feed was itself already at/past the
-    // household's usual last-feed-of-the-day hour is a fixed fact the moment that feed
-    // was logged, so the prediction it produces stays stable no matter when you look at it
-    // afterward.
-    const lastFeedHour = lastFeedTime.getHours() + lastFeedTime.getMinutes() / 60;
-    const lastFeedBucket = bucketOf(lastFeedTime, lastFeedTime);
-    const pastBedtime = typicalLastHour != null && bucketMedian.night != null && lastFeedHour >= typicalLastHour;
     usedBucket = pastBedtime ? 'night' : lastFeedBucket;
     medianMin = bucketMedian[usedBucket] != null ? bucketMedian[usedBucket] : median(allRecent);
     if (medianMin == null) return { status: 'collecting' };
