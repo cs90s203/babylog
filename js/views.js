@@ -429,8 +429,8 @@ function renderTodayTimeline(state) {
     }
   });
   const ny = yOfAdjusted(nowPos);
-  nodes += `<div style="position:absolute;left:${axisX - 4}px;right:0;top:${ny}px;height:2px;background:var(--accent);z-index:3;"></div>
-    <div style="position:absolute;right:4px;top:${ny - 14}px;font-size:9px;font-weight:800;color:var(--accent);background:var(--card2);padding:1px 6px;border-radius:6px;z-index:3;">現在 ${hm(now)}</div>`;
+  nodes += `<div style="position:absolute;left:${axisX - 4}px;right:0;top:${ny}px;height:1px;background:var(--accent);z-index:3;"></div>
+    <div style="position:absolute;right:4px;top:${ny - 14}px;font-size:9px;font-weight:800;color:var(--accent);background:var(--card2);padding:1px 6px;border-radius:6px;z-index:3;">now ${hm(now)}</div>`;
 
   // compact=true abbreviates the label to just emoji+one-character (排便→便, 尿尿→尿) —
   // used when a chip is part of an overlapping stack (see below) and doesn't have room to
