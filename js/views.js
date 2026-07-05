@@ -1523,6 +1523,8 @@ function renderMilkSheet(state, reopen) {
     <div class="sheet" onclick="event.stopPropagation()" onpointerdown="A.startSheetDrag(event)" style="${sheetAnim(reopen)}">
       <div class="sheet-handle"></div>
       <h2 style="font-size:23px;font-weight:800;margin-bottom:16px;color:var(--text);">記錄喝奶 🍼</h2>
+      <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">日期</p>
+      <input type="date" value="${esc(state.recDate)}" onchange="A.onRecDate(this.value)" style="margin-bottom:16px;" />
       <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">時間</p>
       ${timeStepper(state)}
       <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin:16px 0 4px;">奶量（母乳 ＋ 配方，可混合）</p>
@@ -1542,7 +1544,9 @@ function renderEditSheet(state, reopen) {
     <div class="sheet" onclick="event.stopPropagation()" onpointerdown="A.startSheetDrag(event)" style="${sheetAnim(reopen)}">
       <div class="sheet-handle"></div>
       <h2 style="font-size:23px;font-weight:800;margin-bottom:6px;color:var(--text);">補記${label}</h2>
-      <p style="font-size:13px;color:var(--text2);margin-bottom:18px;">調整時間後送出。</p>
+      <p style="font-size:13px;color:var(--text2);margin-bottom:18px;">調整日期時間後送出。</p>
+      <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">日期</p>
+      <input type="date" value="${esc(state.recDate)}" onchange="A.onRecDate(this.value)" style="margin-bottom:16px;" />
       <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">時間</p>
       ${timeStepper(state)}
       <button onclick="A.confirmRecord()" class="primary-btn" style="margin-top:24px;">✓ 完成記錄</button>

@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.22.1';
+const APP_VERSION = '2.23.0';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -34,6 +34,7 @@ const App = {
     editingId: null,
     editBy: '',
     editDate: todayStr(), // which calendar date the edit sheet's time stepper applies to — see openEditRec/saveEdit
+    recDate: todayStr(), // which calendar date the ADD-new-record sheets (milk/quick poop-pee-brush) apply to — see openMilk/startPress/confirmRecord
     confirmDelId: null,
     dragId: null,
     justUpdatedId: null, // briefly set after a timeline drag commits, to glow that chip
@@ -213,7 +214,7 @@ const App = {
     this._pressTimer = setTimeout(() => {
       this._longFired = true;
       const now = new Date();
-      this.set({ sheet: 'edit', recordType: type, rt: { h: now.getHours(), m: Math.round(now.getMinutes() / 5) * 5 % 60 } });
+      this.set({ sheet: 'edit', recordType: type, rt: { h: now.getHours(), m: Math.round(now.getMinutes() / 5) * 5 % 60 }, recDate: todayStr() });
     }, 450);
   },
   endPress() { clearTimeout(this._pressTimer); },
@@ -227,10 +228,12 @@ const App = {
     this.set({
       sheet: 'milk', recordType: 'milk',
       rt: { h: n.getHours(), m: Math.round(n.getMinutes() / 5) * 5 % 60 },
+      recDate: todayStr(),
       milkBreast: Store.data.settings.defaultMilk.breast,
       milkFormula: Store.data.settings.defaultMilk.formula,
     });
   },
+  onRecDate(v) { this.set({ recDate: v }); },
   setH(d) { const rt = this.state.rt; this.set({ rt: { ...rt, h: (rt.h + d + 24) % 24 } }); },
   setM(d) { const rt = this.state.rt; this.set({ rt: { ...rt, m: (rt.m + d + 60) % 60 } }); },
 
@@ -334,8 +337,11 @@ const App = {
 
   confirmRecord() {
     const s = this.state;
-    const now = new Date();
-    const t = new Date(now); t.setHours(s.rt.h, s.rt.m, 0, 0);
+    // Built from the sheet's own date field (recDate), not "today" — see openMilk/
+    // startPress, which pre-fill it to today but let it be changed to backdate a forgotten
+    // record. Same local-safe construction as _editDateTime()/dateFromKey().
+    const [ry, rm, rd] = s.recDate.split('-').map(Number);
+    const t = new Date(ry, rm - 1, rd); t.setHours(s.rt.h, s.rt.m, 0, 0);
     const type = s.recordType;
     if (type === 'milk') {
       Store.addEvent('milk', t, { breastMl: s.milkBreast, formulaMl: s.milkFormula, amountMl: s.milkBreast + s.milkFormula });
