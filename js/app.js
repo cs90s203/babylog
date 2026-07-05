@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.22.0';
+const APP_VERSION = '2.22.1';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -33,6 +33,7 @@ const App = {
     pendingCaregiverRename: null, // { oldName, newName } while confirming a "我是…" change that would bulk-rewrite past records
     editingId: null,
     editBy: '',
+    editDate: todayStr(), // which calendar date the edit sheet's time stepper applies to — see openEditRec/saveEdit
     confirmDelId: null,
     dragId: null,
     justUpdatedId: null, // briefly set after a timeline drag commits, to glow that chip
@@ -365,10 +366,11 @@ const App = {
   },
   openEditRec(rec) {
     const dt = new Date(rec.time);
-    const st = { sheet: 'editRec', editingId: rec.id, recordType: rec.type, rt: { h: dt.getHours(), m: dt.getMinutes() }, editBy: rec.by || Store.caregiver || '' };
+    const st = { sheet: 'editRec', editingId: rec.id, recordType: rec.type, rt: { h: dt.getHours(), m: dt.getMinutes() }, editDate: todayStr(dt), editBy: rec.by || Store.caregiver || '' };
     if (rec.type === 'milk') { st.milkBreast = rec.breastMl || 0; st.milkFormula = rec.formulaMl || 0; }
     this.set(st);
   },
+  onEditDate(v) { this.set({ editDate: v }); },
   setEditType(t) { this.set({ recordType: t }); },
   onEditBy(v) { this.set({ editBy: v }); },
   // Tapping a caregiver tag (see allCaregiverNames/renderEditRecSheet) — a normal rerender
@@ -382,9 +384,19 @@ const App = {
     const el = document.getElementById('f-edit-by');
     return (el && el.value.trim()) || this.state.editBy || Store.caregiver || '未命名';
   },
+  // Builds the edited record's full timestamp from the edit sheet's OWN date field, not
+  // "today" — a plain `new Date("YYYY-MM-DD")` parses as UTC midnight (shifts a day in any
+  // timezone ahead of UTC), so this constructs it from the parts directly, same as
+  // dateFromKey() in views.js.
+  _editDateTime() {
+    const [y, m, d] = this.state.editDate.split('-').map(Number);
+    const t = new Date(y, m - 1, d);
+    t.setHours(this.state.rt.h, this.state.rt.m, 0, 0);
+    return t;
+  },
   saveEdit() {
     const s = this.state;
-    const t = new Date(); t.setHours(s.rt.h, s.rt.m, 0, 0);
+    const t = this._editDateTime();
     const patch = { type: s.recordType, time: t.toISOString(), by: this._editByValue() };
     if (s.recordType === 'milk') Object.assign(patch, { breastMl: s.milkBreast, formulaMl: s.milkFormula, amountMl: s.milkBreast + s.milkFormula });
     Store.updateEvent(s.editingId, patch);
@@ -393,7 +405,7 @@ const App = {
   },
   editAddOther() {
     const s = this.state;
-    const t = new Date(); t.setHours(s.rt.h, s.rt.m, 0, 0);
+    const t = this._editDateTime();
     Store.updateEvent(s.editingId, { type: s.recordType, time: t.toISOString(), by: this._editByValue() });
     const other = s.recordType === 'poop' ? 'pee' : 'poop';
     Store.addEvent(other, t);

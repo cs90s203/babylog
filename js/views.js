@@ -1571,6 +1571,8 @@ function renderEditRecSheet(state, reopen) {
     <div class="sheet" onclick="event.stopPropagation()" onpointerdown="A.startSheetDrag(event)" style="padding-bottom:30px;${sheetAnim(reopen)}">
       <div class="sheet-handle"></div>
       <h2 style="font-size:23px;font-weight:800;margin-bottom:16px;color:var(--text);">編輯記錄</h2>
+      <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">日期</p>
+      <input type="date" value="${esc(state.editDate)}" onchange="A.onEditDate(this.value)" style="margin-bottom:16px;" />
       <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">時間</p>
       ${timeStepper(state)}
       ${typeSeg}
