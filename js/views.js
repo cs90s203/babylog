@@ -1522,6 +1522,16 @@ function mlValueSpan(state, field) {
   const val = field === 'milkBreast' ? state.milkBreast : state.milkFormula;
   return `<span id="${id}" onclick="A.startNumEdit('${field}')" style="font-size:15px;font-weight:800;color:var(--text);cursor:pointer;">${val} ml</span>`;
 }
+// "由誰處理" picker shared by the add sheets (renderMilkSheet/renderEditSheet, via recBy) and
+// the edit sheet (renderEditRecSheet, via editBy): frequency-sorted chips of every caregiver
+// seen in history plus a free-text field for a new name. The text field has no onchange on
+// purpose — its value is read live at submit (_recByValue/_editByValue) so a re-render can't
+// drop a tap on the confirm button sitting right next to it.
+function caregiverPickerHtml(selected, pickAction, inputId) {
+  return `<p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin:16px 0 8px;">由誰處理</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">${allCaregiverNames().map(n => `<button onclick="A.${pickAction}('${esc(n).replace(/'/g, "&#39;")}')" style="padding:8px 14px;border:none;border-radius:12px;font-size:13px;font-weight:700;font-family:inherit;background:${n === selected ? 'var(--accent)' : 'var(--card2)'};color:${n === selected ? '#fff' : 'var(--text2)'};">${esc(n)}</button>`).join('')}</div>
+    <input id="${inputId}" type="text" value="${esc(selected)}" placeholder="或輸入新名字" style="margin-bottom:14px;" />`;
+}
 function renderMilkSheet(state, reopen) {
   return `<div class="sheet-overlay" onclick="A.closeSheet()">
     <div class="sheet" onclick="event.stopPropagation()" onpointerdown="A.startSheetDrag(event)" style="${sheetAnim(reopen)}">
@@ -1537,6 +1547,7 @@ function renderMilkSheet(state, reopen) {
       <div style="margin:0 4px 14px;"><input type="range" min="0" max="300" step="5" value="${state.milkBreast}" oninput="A.liveSlider('breast',this.value)" /></div>
       <div style="display:flex;justify-content:space-between;align-items:baseline;margin:6px 4px 2px;"><span style="font-size:13px;font-weight:700;color:#E8A33D;">🍼 配方</span>${mlValueSpan(state, 'milkFormula')}</div>
       <div style="margin:0 4px 22px;"><input type="range" min="0" max="300" step="5" value="${state.milkFormula}" oninput="A.liveSlider('formula',this.value)" /></div>
+      ${caregiverPickerHtml(state.recBy, 'pickRecBy', 'f-rec-by')}
       <button onclick="A.confirmRecord()" class="primary-btn">✓ 完成記錄</button>
       <button onclick="A.closeSheet()" class="text-btn">取消</button>
     </div>
@@ -1553,7 +1564,8 @@ function renderEditSheet(state, reopen) {
       <input type="date" value="${esc(state.recDate)}" onchange="A.onRecDate(this.value)" style="margin-bottom:16px;" />
       <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">時間</p>
       ${timeStepper(state)}
-      <button onclick="A.confirmRecord()" class="primary-btn" style="margin-top:24px;">✓ 完成記錄</button>
+      ${caregiverPickerHtml(state.recBy, 'pickRecBy', 'f-rec-by')}
+      <button onclick="A.confirmRecord()" class="primary-btn" style="margin-top:10px;">✓ 完成記錄</button>
       <button onclick="A.closeSheet()" class="text-btn">取消</button>
     </div>
   </div>`;
@@ -1585,9 +1597,7 @@ function renderEditRecSheet(state, reopen) {
       ${timeStepper(state)}
       ${typeSeg}
       ${milkBlock}
-      <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin:16px 0 8px;">由誰處理</p>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">${allCaregiverNames().map(n => `<button onclick="A.pickEditBy('${esc(n).replace(/'/g, "&#39;")}')" style="padding:8px 14px;border:none;border-radius:12px;font-size:13px;font-weight:700;font-family:inherit;background:${n === state.editBy ? 'var(--accent)' : 'var(--card2)'};color:${n === state.editBy ? '#fff' : 'var(--text2)'};">${esc(n)}</button>`).join('')}</div>
-      <input id="f-edit-by" type="text" value="${esc(state.editBy)}" placeholder="或輸入新名字" style="margin-bottom:14px;" />
+      ${caregiverPickerHtml(state.editBy, 'pickEditBy', 'f-edit-by')}
       <button onclick="A.saveEdit()" class="primary-btn" style="padding:16px;font-size:16px;">✓ 儲存變更</button>
       <button onclick="A.deleteFromEdit()" style="width:100%;background:transparent;border:none;padding:12px;font-size:14px;font-weight:700;color:#E5573D;margin-top:4px;">🗑️ 刪除這筆</button>
     </div>

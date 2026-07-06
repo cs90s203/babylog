@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.26.1';
+const APP_VERSION = '2.27.0';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -35,6 +35,7 @@ const App = {
     editBy: '',
     editDate: todayStr(), // which calendar date the edit sheet's time stepper applies to — see openEditRec/saveEdit
     recDate: todayStr(), // which calendar date the ADD-new-record sheets (milk/quick poop-pee-brush) apply to — see openMilk/startPress/confirmRecord
+    recBy: '', // who handled it, for the ADD-new-record sheets (kept separate from editBy so add/edit flows don't cross-contaminate) — pre-filled to Store.caregiver on open, applies only to this one record
     confirmDelId: null,
     dragId: null,
     justUpdatedId: null, // briefly set after a timeline drag commits, to glow that chip
@@ -263,7 +264,7 @@ const App = {
     this._pressTimer = setTimeout(() => {
       this._longFired = true;
       const now = new Date();
-      this.set({ sheet: 'edit', recordType: type, rt: { h: now.getHours(), m: Math.round(now.getMinutes() / 5) * 5 % 60 }, recDate: todayStr() });
+      this.set({ sheet: 'edit', recordType: type, rt: { h: now.getHours(), m: Math.round(now.getMinutes() / 5) * 5 % 60 }, recDate: todayStr(), recBy: Store.caregiver || '' });
     }, 450);
   },
   endPress() { clearTimeout(this._pressTimer); },
@@ -278,11 +279,21 @@ const App = {
       sheet: 'milk', recordType: 'milk',
       rt: { h: n.getHours(), m: Math.round(n.getMinutes() / 5) * 5 % 60 },
       recDate: todayStr(),
+      recBy: Store.caregiver || '',
       milkBreast: Store.data.settings.defaultMilk.breast,
       milkFormula: Store.data.settings.defaultMilk.formula,
     });
   },
   onRecDate(v) { this.set({ recDate: v }); },
+  // Tapping a caregiver chip in an ADD sheet (see renderMilkSheet/renderEditSheet) — a plain
+  // re-render is fine for a tap. The text field below it has no onchange (same reasoning as
+  // _editByValue: a re-render mid-tap could drop the click on the confirm button next to it),
+  // so its typed value is read live at submit via _recByValue().
+  pickRecBy(name) { this.set({ recBy: name }); },
+  _recByValue() {
+    const el = document.getElementById('f-rec-by');
+    return (el && el.value.trim()) || this.state.recBy || Store.caregiver || '未命名';
+  },
   setH(d) { const rt = this.state.rt; this.set({ rt: { ...rt, h: (rt.h + d + 24) % 24 } }); },
   setM(d) { const rt = this.state.rt; this.set({ rt: { ...rt, m: (rt.m + d + 60) % 60 } }); },
 
@@ -392,13 +403,14 @@ const App = {
     const [ry, rm, rd] = s.recDate.split('-').map(Number);
     const t = new Date(ry, rm - 1, rd); t.setHours(s.rt.h, s.rt.m, 0, 0);
     const type = s.recordType;
+    const by = this._recByValue(); // chosen in the sheet's 由誰處理 picker; applies to this record only
     if (type === 'milk') {
-      const ev = Store.addEvent('milk', t, { breastMl: s.milkBreast, formulaMl: s.milkFormula, amountMl: s.milkBreast + s.milkFormula });
+      const ev = Store.addEvent('milk', t, { breastMl: s.milkBreast, formulaMl: s.milkFormula, amountMl: s.milkBreast + s.milkFormula, by });
       this._snapshotLivePrediction(ev);
       this.set({ sheet: null });
       this.toast('🍼', '喝奶記錄了！');
     } else {
-      Store.addEvent(type, t);
+      Store.addEvent(type, t, { by });
       const ev = Store.data.events[Store.data.events.length - 1];
       const other = type === 'poop' ? 'pee' : type === 'pee' ? 'poop' : null;
       const map = { poop: ['💩', '排便記錄了！'], pee: ['💧', '尿尿記錄了！'], brush: ['👄', '刷牙記錄了！'] };
@@ -427,7 +439,9 @@ const App = {
     const t = this.state.toast;
     if (!t || !t.addType) return;
     const src = Store.data.events.find(e => e.id === t.addEvId);
-    Store.addEvent(t.addType, src ? new Date(src.time) : new Date());
+    // Inherit the paired record's caregiver — one diaper change is one person's doing, so the
+    // "also add the other" shortcut shouldn't silently fall back to the device default.
+    Store.addEvent(t.addType, src ? new Date(src.time) : new Date(), src ? { by: src.by } : undefined);
     const m2 = { poop: ['💩', '也記了排便！'], pee: ['💧', '也記了尿尿！'] };
     this.toast(m2[t.addType][0], m2[t.addType][1]);
   },
