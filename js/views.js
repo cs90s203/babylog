@@ -884,7 +884,7 @@ function renderFeedStats(state) {
   const { labels, milkCounts } = bucketize(range, evs, 'milk');
   const mMax = Math.max(1, ...milkCounts);
   const milkChart = sCard(`喝奶次數（${range === 'week' ? '每日' : range === 'month' ? '每週' : '每月'}）`,
-    `<div style="display:flex;align-items:flex-end;gap:6px;height:120px;">${milkCounts.map((v, i) => `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;"><div style="font-size:9px;color:var(--text3);font-weight:700;">${v}</div><div style="width:100%;height:${Math.round(v / mMax * 86) + 6}px;background:linear-gradient(180deg,#FF8C6B,#FF6B4A);border-radius:6px;"></div><div style="font-size:9px;color:var(--text2);font-weight:600;">${labels[i]}</div>${dateSubLabel(i)}</div>`).join('')}</div>`);
+    `<div style="display:flex;align-items:flex-end;gap:6px;height:120px;">${milkCounts.map((v, i) => `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;"><div style="font-size:9px;color:var(--text3);font-weight:700;">${v}</div><div style="width:100%;height:${Math.round(v / mMax * 56) + 6}px;background:linear-gradient(180deg,#FF8C6B,#FF6B4A);border-radius:6px;"></div><div style="font-size:9px;color:var(--text2);font-weight:600;">${labels[i]}</div>${dateSubLabel(i)}</div>`).join('')}</div>`);
 
   // Tapping a bar expands that bucket's breast/formula breakdown below the chart — in week
   // mode that's a single day; in month/year mode (where a bar is a week's or a month's
@@ -901,7 +901,7 @@ function renderFeedStats(state) {
       </div>`
     : '';
   const amtChart = sCard('奶量 ml（母乳 ＋ 配方）',
-    `<div style="display:flex;align-items:flex-end;gap:6px;height:120px;">${totals.map((tot, i) => `<div onclick="A.toggleMlBar(${i})" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;cursor:pointer;"><div style="width:100%;height:${Math.round(tot / aMax * 92)}px;border-radius:6px;overflow:hidden;display:flex;flex-direction:column;outline:${expandedIdx === i ? '2px solid var(--accent)' : 'none'};outline-offset:2px;">${tot > 0 ? `<div style="height:${formulaMl[i] / tot * 100}%;background:#E8A33D;"></div><div style="flex:1;background:#FF8C6B;"></div>` : ''}</div><div style="font-size:9px;color:var(--text2);font-weight:600;">${labels[i]}</div>${dateSubLabel(i)}</div>`).join('')}</div>
+    `<div style="display:flex;align-items:flex-end;gap:6px;height:120px;">${totals.map((tot, i) => `<div onclick="A.toggleMlBar(${i})" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;cursor:pointer;"><div style="width:100%;height:${Math.round(tot / aMax * 78)}px;border-radius:6px;overflow:hidden;display:flex;flex-direction:column;outline:${expandedIdx === i ? '2px solid var(--accent)' : 'none'};outline-offset:2px;">${tot > 0 ? `<div style="height:${formulaMl[i] / tot * 100}%;background:#E8A33D;"></div><div style="flex:1;background:#FF8C6B;"></div>` : ''}</div><div style="font-size:9px;color:var(--text2);font-weight:600;">${labels[i]}</div>${dateSubLabel(i)}</div>`).join('')}</div>
     <div style="display:flex;gap:14px;margin-top:12px;justify-content:center;">${[['#FF8C6B', '母乳'], ['#E8A33D', '配方']].map(([c, l]) => `<div style="display:flex;align-items:center;gap:4px;"><div style="width:9px;height:9px;border-radius:50%;background:${c};"></div><span style="font-size:11px;color:var(--text2);">${l}</span></div>`).join('')}</div>
     ${expandedDetail}`);
 
@@ -918,7 +918,7 @@ function renderFeedStats(state) {
       <div style="font-size:10px;font-weight:800;color:var(--text);line-height:1.3;">${cnt}</div>
       <div style="font-size:9px;font-weight:700;color:#C8965A;line-height:1.3;">${dPoop[i]}</div>
       <div style="font-size:9px;font-weight:700;color:#79C3F0;line-height:1.3;">${dPee[i]}</div>
-      <div style="width:100%;margin-top:5px;height:${Math.round(cnt / dMax * 76) + (cnt > 0 ? 6 : 0)}px;border-radius:6px;overflow:hidden;display:flex;flex-direction:column;">${cnt > 0 ? `<div style="height:${dPoop[i] / ((dPoop[i] + dPee[i]) || 1) * 100}%;background:#C8965A;"></div><div style="flex:1;background:#79C3F0;"></div>` : ''}</div>
+      <div style="width:100%;margin-top:5px;height:${Math.round(cnt / dMax * 58) + (cnt > 0 ? 6 : 0)}px;border-radius:6px;overflow:hidden;display:flex;flex-direction:column;">${cnt > 0 ? `<div style="height:${dPoop[i] / ((dPoop[i] + dPee[i]) || 1) * 100}%;background:#C8965A;"></div><div style="flex:1;background:#79C3F0;"></div>` : ''}</div>
       <div style="font-size:9px;color:var(--text2);font-weight:600;margin-top:6px;">${labels[i]}</div>${dateSubLabel(i)}
     </div>`).join('')}</div>
     <div style="display:flex;gap:14px;margin-top:12px;justify-content:center;">${[['var(--text)', '換尿布次數'], ['#C8965A', '排便'], ['#79C3F0', '尿尿']].map(([c, l]) => `<div style="display:flex;align-items:center;gap:4px;"><div style="width:9px;height:9px;border-radius:50%;background:${c};"></div><span style="font-size:11px;color:var(--text2);">${l}</span></div>`).join('')}</div>`);
@@ -926,14 +926,16 @@ function renderFeedStats(state) {
   const sleepBuckets = bucketizeSleep(range, offset, sleepByDay);
   const sMax = Math.max(1, ...sleepBuckets);
   const sleepChart = sCard(`睡眠時數 推估（${range === 'week' ? '每日' : range === 'month' ? '每週平均' : '每月平均'}）`,
-    `<div style="display:flex;align-items:flex-end;gap:6px;height:120px;">${sleepBuckets.map((v, i) => `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;"><div style="font-size:9px;color:var(--text3);font-weight:700;">${v ? v + 'h' : '—'}</div><div style="width:100%;height:${v ? Math.round(v / sMax * 86) + 6 : 2}px;background:linear-gradient(180deg,#9BB1FF,#7A94E8);border-radius:6px;"></div><div style="font-size:9px;color:var(--text2);font-weight:600;">${labels[i]}</div>${dateSubLabel(i)}</div>`).join('')}</div>
+    `<div style="display:flex;align-items:flex-end;gap:6px;height:120px;">${sleepBuckets.map((v, i) => `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;"><div style="font-size:9px;color:var(--text3);font-weight:700;">${v ? v + 'h' : '—'}</div><div style="width:100%;height:${v ? Math.round(v / sMax * 56) + 6 : 2}px;background:linear-gradient(180deg,#9BB1FF,#7A94E8);border-radius:6px;"></div><div style="font-size:9px;color:var(--text2);font-weight:600;">${labels[i]}</div>${dateSubLabel(i)}</div>`).join('')}</div>
     <p style="font-size:10px;color:var(--text3);margin-top:10px;text-align:center;">依「前一天最後一餐」到「當天第一餐」的間隔推估，僅供參考，不是實際睡眠紀錄</p>`);
 
-  // Left/right swipe (see App.startStatsSwipe/endStatsSwipe) pages through weeks/months/
-  // years — swipe left goes further back in time, matching the convention used by e.g.
-  // Apple Health's weekly charts. Wraps all three charts together since they always show
-  // the same period.
-  const swipeCharts = `<div onpointerdown="A.startStatsSwipe(event.clientX)">${milkChart}${amtChart}${diaperChart}${sleepChart}</div>`;
+  // Left/right swipe (see App.startStatsSwipe/statsSwipeMove/endStatsSwipe) pages through
+  // weeks/months/years — swipe left goes further back in time, matching the convention used
+  // by e.g. Apple Health's weekly charts. Wraps all four charts together since they always
+  // show the same period. touch-action:pan-y lets the browser keep handling vertical scroll
+  // natively while horizontal drags are delivered to us as pointermoves (so the charts track
+  // the finger without fighting the page's up/down scroll).
+  const swipeCharts = `<div id="stats-swipe" style="touch-action:pan-y;will-change:transform;" onpointerdown="A.startStatsSwipe(event.clientX, event.clientY)">${milkChart}${amtChart}${diaperChart}${sleepChart}</div>`;
 
   return rangeTabs + summary + caregiverCard + swipeCharts;
 }

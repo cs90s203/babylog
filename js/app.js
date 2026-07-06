@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.25.1';
+const APP_VERSION = '2.26.0';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -179,16 +179,51 @@ const App = {
   // Swipe left = further back in time, swipe right = toward the present (same convention
   // as e.g. Apple Health's weekly charts). Clamped so you can't swipe past "now" or past
   // the earliest period that actually has any records (see minStatsOffset, views.js).
-  startStatsSwipe(clientX) { this._statsSwipe = { startX: clientX }; },
+  // Follow-the-finger paging for the stats charts. The charts track the finger live (via a
+  // direct transform on #stats-swipe, NOT a state re-render per move — same approach as the
+  // timeline/sheet drags) so it feels responsive instead of "did anything happen?", then
+  // snaps to the next/prev period or springs back on release. Direction is locked on the
+  // first few px of movement so a mostly-vertical drag is left to the page's own scroll (on
+  // touch, touch-action:pan-y already routes vertical to native scroll; the lock is mainly
+  // for mouse/trackpad, where touch-action doesn't apply).
+  startStatsSwipe(clientX, clientY) { this._statsSwipe = { startX: clientX, startY: clientY, locked: null }; },
+  _statsSwipeNode() { return document.getElementById('stats-swipe'); },
+  statsSwipeMove(clientX, clientY) {
+    const s = this._statsSwipe;
+    if (!s) return;
+    const dx = clientX - s.startX, dy = clientY - s.startY;
+    if (s.locked === null) {
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return; // not enough to tell direction yet
+      s.locked = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
+      if (s.locked === 'v') { this._statsSwipe = null; return; } // vertical — hand back to page scroll
+    }
+    if (s.locked !== 'h') return;
+    // Rubber-band when there's nowhere further to page (already on the current period, or on
+    // the oldest one with data) so the edge feels bounded rather than silently doing nothing.
+    const range = this.state.statsRange, off = this.state.statsPeriodOffset;
+    const blocked = (dx > 0 && off >= 0) || (dx < 0 && off <= minStatsOffset(range));
+    const eff = blocked ? dx * 0.25 : dx;
+    const node = this._statsSwipeNode();
+    if (node) { node.style.transition = 'none'; node.style.transform = `translateX(${eff}px)`; node.style.opacity = String(Math.max(0.55, 1 - Math.abs(eff) / 650)); }
+  },
   endStatsSwipe(clientX) {
     const s = this._statsSwipe; this._statsSwipe = null;
-    if (!s) return;
+    if (!s || s.locked !== 'h') return;
     const dx = clientX - s.startX;
-    if (Math.abs(dx) < 40) return;
+    const node = this._statsSwipeNode();
     const range = this.state.statsRange;
+    const width = node ? node.offsetWidth : 320;
+    const commit = Math.abs(dx) > Math.min(90, width * 0.25);
     const dir = dx < 0 ? -1 : 1;
     const next = Math.max(minStatsOffset(range), Math.min(0, this.state.statsPeriodOffset + dir));
-    if (next !== this.state.statsPeriodOffset) this.set({ statsPeriodOffset: next, statsExpandedBar: null });
+    if (commit && next !== this.state.statsPeriodOffset) {
+      // Slide the current charts the rest of the way out, then re-render at the new period
+      // (the fresh node comes back centred, so the eye reads it as the new week snapping in).
+      if (node) { node.style.transition = 'transform .17s ease, opacity .17s ease'; node.style.transform = `translateX(${dir * width}px)`; node.style.opacity = '0'; }
+      setTimeout(() => this.set({ statsPeriodOffset: next, statsExpandedBar: null }), 165);
+    } else if (node) {
+      node.style.transition = 'transform .2s ease, opacity .2s ease'; node.style.transform = 'translateX(0)'; node.style.opacity = '1';
+    }
   },
 
   toggleTheme() {
