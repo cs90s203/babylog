@@ -86,7 +86,19 @@ input[type=date] {
 }
 input[type=date]:focus, input[type=text]:focus { border-color: var(--accent); }
 
-button { cursor: pointer; }
+/* Buttons never need in-button text selection, and several are long-press / press-and-hold
+   controls (the paw quick-record buttons -> App.startPress, the time steppers -> App.startHold).
+   On iOS a long-press on a button was mis-triggering the text-selection loupe/handles and the
+   callout menu (copy / look up / share) instead of the intended hold gesture. Suppress both
+   globally here so every current and future button is covered (the timeline .chip and the home
+   prediction icon carry the same properties inline for the same reason). Inputs, sheets and any
+   genuinely selectable text are unaffected — this is scoped to <button> only. */
+button {
+  cursor: pointer;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
 
 @keyframes pop { 0% { transform: scale(.5); opacity: 0 } 55% { transform: scale(1.08) } 100% { transform: scale(1); opacity: 1 } }
 @keyframes fade { 0%, 55% { opacity: 1 } 100% { opacity: 0 } }
