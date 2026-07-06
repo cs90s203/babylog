@@ -7,6 +7,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // re-renders, and each gesture's own DOM node can get replaced mid-gesture by a rerender.
   window.addEventListener('pointermove', (e) => { App.dragMove(e.clientX, e.clientY); App.sheetDragMove(e.clientY); App.statsSwipeMove(e.clientX, e.clientY); });
   window.addEventListener('pointerup', (e) => { App.dragEnd(); App.sheetDragEnd(e.clientY); App.stopHold(); App.endStatsSwipe(e.clientX); });
+  // Mobile browsers raise pointercancel (not pointerup) when they take over a touch mid-gesture
+  // as a scroll/system gesture — spring the stats charts back so they don't freeze half-swiped.
+  window.addEventListener('pointercancel', () => { App.stopHold(); App.cancelStatsSwipe(); });
 
   // Pull-to-refresh: a plain page reload, not tied to sync (Firestore already syncs in
   // real time on its own). This is here purely as a manual "start clean" convenience —

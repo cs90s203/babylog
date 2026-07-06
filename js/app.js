@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.26.0';
+const APP_VERSION = '2.26.1';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -198,13 +198,26 @@ const App = {
       if (s.locked === 'v') { this._statsSwipe = null; return; } // vertical — hand back to page scroll
     }
     if (s.locked !== 'h') return;
-    // Rubber-band when there's nowhere further to page (already on the current period, or on
-    // the oldest one with data) so the edge feels bounded rather than silently doing nothing.
+    // Direction follows the finger like a carousel: dragging RIGHT reveals the PREVIOUS
+    // (older) period from the left, dragging LEFT brings the NEXT (newer) one. Rubber-band
+    // when there's nowhere further to go (dragging left while already on the current period,
+    // or right while on the oldest one with data) so the edge feels bounded, not dead.
     const range = this.state.statsRange, off = this.state.statsPeriodOffset;
-    const blocked = (dx > 0 && off >= 0) || (dx < 0 && off <= minStatsOffset(range));
+    const blocked = (dx < 0 && off >= 0) || (dx > 0 && off <= minStatsOffset(range));
     const eff = blocked ? dx * 0.25 : dx;
     const node = this._statsSwipeNode();
     if (node) { node.style.transition = 'none'; node.style.transform = `translateX(${eff}px)`; node.style.opacity = String(Math.max(0.55, 1 - Math.abs(eff) / 650)); }
+  },
+  _springStatsSwipeBack() {
+    const node = this._statsSwipeNode();
+    if (node) { node.style.transition = 'transform .2s ease, opacity .2s ease'; node.style.transform = 'translateX(0)'; node.style.opacity = '1'; }
+  },
+  // Fires on pointercancel (mobile browsers raise this instead of pointerup when they decide
+  // mid-gesture the touch was a scroll / system gesture) — without handling it, the charts
+  // stayed frozen wherever the finger left them because the spring-back only ran on pointerup.
+  cancelStatsSwipe() {
+    const s = this._statsSwipe; this._statsSwipe = null;
+    if (s && s.locked === 'h') this._springStatsSwipeBack();
   },
   endStatsSwipe(clientX) {
     const s = this._statsSwipe; this._statsSwipe = null;
@@ -214,15 +227,16 @@ const App = {
     const range = this.state.statsRange;
     const width = node ? node.offsetWidth : 320;
     const commit = Math.abs(dx) > Math.min(90, width * 0.25);
-    const dir = dx < 0 ? -1 : 1;
+    const dir = dx < 0 ? 1 : -1; // drag left -> newer (+1 toward 0), drag right -> older (-1)
     const next = Math.max(minStatsOffset(range), Math.min(0, this.state.statsPeriodOffset + dir));
     if (commit && next !== this.state.statsPeriodOffset) {
-      // Slide the current charts the rest of the way out, then re-render at the new period
-      // (the fresh node comes back centred, so the eye reads it as the new week snapping in).
-      if (node) { node.style.transition = 'transform .17s ease, opacity .17s ease'; node.style.transform = `translateX(${dir * width}px)`; node.style.opacity = '0'; }
+      // Slide the current charts the rest of the way out IN THE FINGER'S DIRECTION, then
+      // re-render at the new period (the fresh node comes back centred, so the eye reads it
+      // as the new period snapping in).
+      if (node) { node.style.transition = 'transform .17s ease, opacity .17s ease'; node.style.transform = `translateX(${dx < 0 ? -width : width}px)`; node.style.opacity = '0'; }
       setTimeout(() => this.set({ statsPeriodOffset: next, statsExpandedBar: null }), 165);
-    } else if (node) {
-      node.style.transition = 'transform .2s ease, opacity .2s ease'; node.style.transform = 'translateX(0)'; node.style.opacity = '1';
+    } else {
+      this._springStatsSwipeBack();
     }
   },
 
