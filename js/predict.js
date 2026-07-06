@@ -175,21 +175,69 @@ function refMlAtAge(ageMonths) {
   return lo[1] + (hi[1] - lo[1]) * f;
 }
 
+// "Catch-up" bonus (ml) added to the next-feed amount when the baby has recently drunk less
+// than its usual VOLUME OVER TIME — the way appetite tends to rebound after a few light feeds.
+// Deliberately measured as volume across a time window, NOT per-feed size: "three small feeds
+// close together" sum to a normal amount and must not read as a deficit the way comparing
+// single-feed sizes would (a real failure mode of a naive per-feed model). Two windows are
+// weighed and only the LARGER shortfall is acted on — never summed — so a short-recent view
+// (model A, ~2 typical intervals) and a whole-day view (model B, since the last overnight
+// sleep) don't double-count. Single-direction (only ever adds, never predicts less for a big
+// eater), capped at half a typical feed, and skipped around the overnight sleep / first feed
+// of the day, where low intake is just sleep rather than a deficit to make up. asOf is the
+// vantage point ("now" for the live prediction, or a past feed's time when reconstructing).
+function feedCatchUpBonus(feeds, ownMedian, asOf) {
+  if (feeds.length < N_RECENT || !ownMedian) return 0;
+  const times = feeds.map(f => new Date(f.time).getTime());
+  const nowMs = asOf.getTime();
+  const gaps = [];
+  for (let i = 1; i < feeds.length; i++) gaps.push(times[i] - times[i - 1]);
+  const typInt = median(gaps.slice(-N_RECENT * 2)); // typical interval between feeds (ms)
+  if (typInt == null || typInt <= 0) return 0;
+  const lastMs = times[times.length - 1];
+  // A gap longer than this reads as an overnight sleep boundary — a self-contained, data-light
+  // proxy for the night-interval median so this helper doesn't have to reach into predictNextFeed.
+  const longGap = typInt * 1.6;
+  // Around the overnight sleep / first feed after waking, low intake is expected, not a deficit.
+  if (nowMs - lastMs >= longGap) return 0;
+  const lastHour = new Date(lastMs).getHours();
+  if (lastHour >= 23 || lastHour < 5) return 0;
+
+  const expectedVol = (windowMs) => ownMedian * (windowMs / typInt);
+  const actualVolFrom = (fromMs) => { let s = 0; for (let i = 0; i < times.length; i++) if (times[i] >= fromMs && times[i] <= nowMs) s += (feeds[i].amountMl || 0); return s; };
+  // Model A — short recent window (~2 typical intervals).
+  const shortMs = typInt * 2;
+  const shortDeficit = Math.max(0, expectedVol(shortMs) - actualVolFrom(nowMs - shortMs));
+  // Model B — whole current day, from the first feed after the last overnight-sleep gap.
+  let dayStartMs = null;
+  for (let i = times.length - 1; i >= 1; i--) { if (times[i] - times[i - 1] >= longGap) { dayStartMs = times[i]; break; } }
+  const dayDeficit = (dayStartMs != null && dayStartMs < nowMs)
+    ? Math.max(0, expectedVol(nowMs - dayStartMs) - actualVolFrom(dayStartMs)) : 0;
+  // Combine by MAX (not sum) so the two views can't double-count the same shortfall.
+  const bonus = 0.5 * Math.max(shortDeficit, dayDeficit);
+  return Math.min(bonus, ownMedian * 0.5); // cap at half a typical feed
+}
+
 // Predicts the next feed's amount (ml). Primary signal is the household's own recent
 // feeds — taking the median of just the last N_RECENT naturally tracks "drinks more as
 // they grow" for free, since older/smaller feeds age out of that window on their own; no
 // separate growth-trend model needed. The age-based reference table only fills in early
 // on, before there's much of the baby's own data to trust — its influence fades out as
 // feeds accumulate (matured by 30 feeds, roughly a week or so for most feeding schedules).
-function predictNextAmount(events, babyBirthDate) {
+// On top of that base, a catch-up bonus (see feedCatchUpBonus) nudges the amount up when
+// recent intake has run below the baby's usual volume-over-time. asOf lets a caller
+// reconstruct the amount as of an earlier moment (same role as predictNextFeed's asOf).
+function predictNextAmount(events, babyBirthDate, asOf) {
   const feeds = events.filter(e => e.type === 'milk' && (e.amountMl || 0) > 0).slice().sort((a, b) => new Date(a.time) - new Date(b.time));
   const ownMedian = median(feeds.slice(-N_RECENT).map(e => e.amountMl));
+  const now = asOf || new Date();
   let refMl = null;
-  if (babyBirthDate) refMl = refMlAtAge((new Date() - new Date(babyBirthDate)) / 86400000 / 30.4375);
-  if (ownMedian == null) return refMl != null ? Math.round(refMl) : null;
-  if (refMl == null) return Math.round(ownMedian);
-  const ownWeight = Math.min(1, feeds.length / 30);
-  return Math.round(ownWeight * ownMedian + (1 - ownWeight) * refMl);
+  if (babyBirthDate) refMl = refMlAtAge((now - new Date(babyBirthDate)) / 86400000 / 30.4375);
+  let base;
+  if (ownMedian == null) { if (refMl == null) return null; base = refMl; }
+  else if (refMl == null) base = ownMedian;
+  else { const ownWeight = Math.min(1, feeds.length / 30); base = ownWeight * ownMedian + (1 - ownWeight) * refMl; }
+  return Math.round(base + feedCatchUpBonus(feeds, ownMedian, now));
 }
 
 // Retroactively reconstructs what predictNextFeed()/predictNextAmount() would have said
@@ -212,7 +260,7 @@ function analyzeTodayPredictionAccuracy(events, alarmOffsetMinutes, babyBirthDat
     // and produce a bogus predicted time completely unrelated to what the app would have
     // shown live. Always recomputed with the *current* algorithm.
     const pred = predictNextFeed(before, alarmOffsetMinutes, fTime);
-    const predictedMl = predictNextAmount(before, babyBirthDate);
+    const predictedMl = predictNextAmount(before, babyBirthDate, fTime);
     const actualMl = f.amountMl || 0;
     // 即測 (live snapshot): the prediction the app actually *displayed* for "next feed" right
     // after the previous feed was logged, frozen onto that previous feed at the time (see
