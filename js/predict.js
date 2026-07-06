@@ -213,9 +213,12 @@ function feedCatchUpBonus(feeds, ownMedian, asOf) {
   for (let i = times.length - 1; i >= 1; i--) { if (times[i] - times[i - 1] >= longGap) { dayStartMs = times[i]; break; } }
   const dayDeficit = (dayStartMs != null && dayStartMs < nowMs)
     ? Math.max(0, expectedVol(nowMs - dayStartMs) - actualVolFrom(dayStartMs)) : 0;
-  // Combine by MAX (not sum) so the two views can't double-count the same shortfall.
-  const bonus = 0.5 * Math.max(shortDeficit, dayDeficit);
-  return Math.min(bonus, ownMedian * 0.5); // cap at half a typical feed
+  // Combine by MAX (not sum) so the two views can't double-count the same shortfall. The rate
+  // (0.3) and cap (15% of a typical feed) are deliberately gentle: an earlier 0.5 rate / 50%
+  // cap let a genuinely low day — or just a day with longer-than-usual gaps — pile up a large
+  // sustained bonus and predict amounts well above what the baby actually drinks ("爆量").
+  const bonus = 0.3 * Math.max(shortDeficit, dayDeficit);
+  return Math.min(bonus, ownMedian * 0.15); // cap at 15% of a typical feed
 }
 
 // Predicts the next feed's amount (ml). Primary signal is the household's own recent
@@ -237,7 +240,14 @@ function predictNextAmount(events, babyBirthDate, asOf) {
   if (ownMedian == null) { if (refMl == null) return null; base = refMl; }
   else if (refMl == null) base = ownMedian;
   else { const ownWeight = Math.min(1, feeds.length / 30); base = ownWeight * ownMedian + (1 - ownWeight) * refMl; }
-  return Math.round(base + feedCatchUpBonus(feeds, ownMedian, now));
+  const amount = base + feedCatchUpBonus(feeds, ownMedian, now);
+  // Ceiling: once there's enough of the baby's own data to trust its typical feed size, never
+  // predict more than 1.2x that — a guardrail so neither the catch-up bonus nor an age-reference
+  // pull can push the number implausibly far above what this baby actually drinks. Skipped while
+  // data is thin (fewer than N_RECENT feeds, where ownMedian isn't representative yet and the age
+  // reference should lead) so a newborn's prediction isn't wrongly clamped down to a noisy median.
+  const capped = (ownMedian != null && feeds.length >= N_RECENT) ? Math.min(amount, ownMedian * 1.2) : amount;
+  return Math.round(capped);
 }
 
 // Retroactively reconstructs what predictNextFeed()/predictNextAmount() would have said
