@@ -429,8 +429,12 @@ function renderTodayTimeline(state) {
     }
   });
   const ny = yOfAdjusted(nowPos);
+  // Label sits just BELOW its line, in the empty 3h look-ahead buffer, rather than above it —
+  // above the line is where the most-recent feed's row (and now its 即測/回測 prediction
+  // lines) sit when you check right after a feed, and the opaque pill used to paint over that
+  // text. Below the line is always dead space (NOW_BOTTOM_GAP reserves room for it).
   nodes += `<div style="position:absolute;left:${axisX - 4}px;right:0;top:${ny}px;height:1px;background:var(--accent);z-index:3;"></div>
-    <div style="position:absolute;right:4px;top:${ny - 14}px;font-size:9px;font-weight:800;color:var(--accent);background:var(--card2);padding:1px 6px;border-radius:6px;z-index:3;">now ${hm(now)}</div>`;
+    <div style="position:absolute;right:4px;top:${ny + 3}px;font-size:9px;font-weight:800;color:var(--accent);background:var(--card2);padding:1px 6px;border-radius:6px;z-index:3;">now ${hm(now)}</div>`;
 
   // compact=true abbreviates the label to just emoji+one-character (排便→便, 尿尿→尿) —
   // used when a chip is part of an overlapping stack (see below) and doesn't have room to
@@ -474,61 +478,59 @@ function renderTodayTimeline(state) {
     const rowStyle = compact
       ? `display:flex;align-items:center;`
       : `display:flex;align-items:center;gap:6px;flex-wrap:wrap;`;
-    // Prediction-vs-actual ERROR only, attached to the actual feed's own row (only
-    // meaningful for the milk feed in this cluster, if any) — just how far off the
-    // prediction was, in whatever blank space is left to the right of the chip row. The
-    // predicted clock time itself is NOT shown here anymore: showing e.g. "預測 12:10" right
-    // next to a chip that's physically sitting at the 09:34 row read as if the two were
-    // supposed to be the same time, which is exactly backwards when the prediction was off
-    // by hours — see the separate ghost marker below, drawn at the predicted time's own
-    // position on the axis, for that comparison.
+    // Prediction-vs-actual, attached to the actual feed's OWN row (only the milk feed in this
+    // cluster, if any). Each predicted time is shown right beside the record it was predicting
+    // — no longer floated off to its own axis position, which read as if the predicted time
+    // "belonged" to whatever unrelated record happened to sit nearest that spot. Two lines
+    // when both exist: 即測 (what the app really displayed live, stored on the previous feed)
+    // and 回測 (recomputed now with the current algorithm). Older feeds without a stored
+    // snapshot show 回測 alone.
     const milkItem = visibleItems.find(r => r.type === 'milk');
     const acc = milkItem && accuracyById[milkItem.id];
-    // Within PREDICTION_SUCCESS_MIN, the predicted and actual time are close enough that
-    // drawing them as two separate timeline positions is just noise — collapse it into a
-    // single "✓準" badge instead (see the ghost-marker loop below, which skips its own
-    // marker for these same accurate ones rather than trying to fix the overlap by fiddling
-    // with layout/spacing).
-    const isAccurate = acc && acc.timeErrorMin != null && Math.abs(acc.timeErrorMin) <= PREDICTION_SUCCESS_MIN;
-    const mlPart = (a) => a.mlError != null ? (a.mlError >= 0 ? '+' : '') + a.mlError + 'ml' : '';
-    const accHtml = acc ? `<div style="position:absolute;right:4px;top:${cl.y - half}px;height:${2 * half}px;display:flex;flex-direction:column;justify-content:center;align-items:flex-end;text-align:right;font-size:8.5px;color:${isAccurate ? '#5BBFA0' : 'var(--text3)'};line-height:1.35;white-space:nowrap;z-index:2;">${isAccurate
-        ? `<div>✓準${acc.timeErrorMin !== 0 ? ' ' + (acc.timeErrorMin >= 0 ? '+' : '') + acc.timeErrorMin + 'm' : ''} ${mlPart(acc)}</div>`
-        : `<div>${acc.timeErrorMin != null ? '誤差 ' + (acc.timeErrorMin >= 0 ? '+' : '') + acc.timeErrorMin + 'm' : ''}</div><div>${mlPart(acc)}</div>`
-      }</div>` : '';
+    // One line: "<label> HH:MM·<ml>  ✓準/誤差 +Xm +Yml". Green when within
+    // PREDICTION_SUCCESS_MIN (a hit), muted otherwise. Returns '' when that prediction source
+    // has no data (e.g. no stored 即測 snapshot, or 回測 was still "collecting").
+    const errBits = (tErr, mErr) => {
+      const parts = [];
+      if (tErr != null) parts.push((tErr >= 0 ? '+' : '') + tErr + 'm');
+      if (mErr != null) parts.push((mErr >= 0 ? '+' : '') + mErr + 'ml');
+      return parts.join(' ');
+    };
+    const predLine = (label, time, ml, tErr, mErr) => {
+      if (!time) return '';
+      const ok = tErr != null && Math.abs(tErr) <= PREDICTION_SUCCESS_MIN;
+      const timeStr = hm(time) + (ml != null ? '·' + ml : '');
+      const bits = errBits(tErr, mErr);
+      const tag = ok ? ('✓準' + (bits ? ' ' + bits : '')) : (bits ? '誤差 ' + bits : '');
+      return `<div style="color:${ok ? '#5BBFA0' : 'var(--text3)'};"><span style="opacity:.7;">${label}</span> ${timeStr}${tag ? ' ' + tag : ''}</div>`;
+    };
+    const accLines = acc ? predLine('即測', acc.liveTime, acc.liveMl, acc.liveTimeErrorMin, acc.liveMlError)
+      + predLine('回測', acc.predictedTime, acc.predictedMl, acc.timeErrorMin, acc.mlError) : '';
+    const accHtml = accLines ? `<div style="position:absolute;right:4px;top:${cl.y - half}px;min-height:${2 * half}px;display:flex;flex-direction:column;justify-content:center;align-items:flex-end;text-align:right;font-size:8.5px;line-height:1.4;white-space:nowrap;z-index:2;">${accLines}</div>` : '';
     nodes += `<div style="position:absolute;left:${axisX - 4}px;top:${cl.y - 5}px;width:10px;height:10px;border-radius:50%;background:${dotColor(visibleItems[0])};border:2px solid var(--card);z-index:2;"></div>
       <div style="position:absolute;left:${HOURW}px;width:${axisX - HOURW - 8}px;text-align:right;top:${cl.y - 8}px;font-size:12px;font-weight:800;color:var(--text);z-index:2;">${hm(dateOfPos(cl.time))}</div>
       <div style="position:absolute;left:${axisX + 14}px;right:4px;top:${cl.y - half}px;min-height:${2 * half}px;${rowStyle}z-index:2;">${itemsHtml}</div>
       ${accHtml}`;
   });
-  // Ghost markers for the predicted time itself — drawn at the predicted time's OWN
-  // position on the axis (not next to the actual feed), since that's what "corresponds to
-  // the right spot on the timeline" actually means: if the prediction was off by hours, the
-  // ghost dot shows up hours away from where the real feed happened, which is the whole
-  // point of the comparison. Dashed/muted styling distinguishes it from real events. Falls
-  // outside the visible window entirely (predicted at some now-untracked hour before
-  // winStart, e.g. from a very early morning miss) is simply skipped rather than clamped.
+  // Weakened axis hint for the (回測) predicted time: just a small hollow dashed dot at the
+  // predicted time's own position on the axis — no text. The predicted clock time is now
+  // spelled out on the actual feed's row (see accHtml above), so this is only a faint "the
+  // prediction fell about here on the timeline" cue rather than a second floating label that
+  // used to drift next to whatever unrelated record sat nearest it and read as belonging to
+  // that record. A predicted time inside a collapsed "無紀錄" gap, or outside the window, is
+  // skipped rather than clamped/stacked onto the gap's own placeholder.
   if (state.showPredictionOverlay) {
-    // A predicted time that lands inside a currently-collapsed "無紀錄" gap has nowhere
-    // sensible to draw — that whole span is folded into one short placeholder row — so skip
-    // it there instead of stacking on top of the gap's own label (same treatment already
-    // given to hourMarks above).
     const inCollapsedSeg = (p) => segs.some(sg => sg.collapsed && p >= sg.h0 - 1e-6 && p <= sg.h1 + 1e-6);
     Object.values(accuracyById).forEach(acc => {
       if (!acc.predictedTime) return;
-      // Accurate ones (within PREDICTION_SUCCESS_MIN) already get the "✓準" badge on the
-      // actual row — the predicted and actual positions are too close together for a
-      // separate ghost to add anything but visual clutter/overlap.
+      // Accurate ones already read as "on time" from the ✓準 line — a dot essentially on top
+      // of the real event's own dot adds nothing.
       if (acc.timeErrorMin != null && Math.abs(acc.timeErrorMin) <= PREDICTION_SUCCESS_MIN) return;
       const p = posOf(acc.predictedTime);
       if (p < startH - 1e-6 || p > endH + 1e-6) return;
       if (inCollapsedSeg(p)) return;
       const y = yOfAdjusted(p);
-      // Right-aligned, same column as the actual-row's error text (not the left side, where
-      // it would sit underneath/behind the opaque chip row whenever a predicted time lands
-      // close to real events) — z-index 1 so it yields to that error text (z-index 2) on the
-      // rare occasion both land on the same row.
-      nodes += `<div style="position:absolute;left:${axisX - 3}px;top:${y - 4}px;width:8px;height:8px;border-radius:50%;border:1.5px dashed var(--text3);background:transparent;z-index:1;"></div>
-        <div style="position:absolute;right:4px;top:${y - 6}px;text-align:right;font-size:9px;color:var(--text3);white-space:nowrap;z-index:1;">┄ 預測 ${hm(acc.predictedTime)}${acc.predictedMl != null ? '・' + acc.predictedMl + 'ml' : ''}</div>`;
+      nodes += `<div style="position:absolute;left:${axisX - 3}px;top:${y - 3}px;width:6px;height:6px;border-radius:50%;border:1px dashed var(--text3);background:transparent;opacity:.5;z-index:1;"></div>`;
     });
   }
   if (dragEv) {

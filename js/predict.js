@@ -205,20 +205,38 @@ function analyzeTodayPredictionAccuracy(events, alarmOffsetMinutes, babyBirthDat
   return todayFeeds.map(f => {
     const fTime = new Date(f.time);
     const before = events.filter(e => new Date(e.time) < fTime);
-    // Reconstruct as of fTime, not the real current moment — without this, "minutes since
-    // the last feed" etc. inside predictNextFeed were measured against whenever someone
-    // happened to check the overlay, not against when this feed actually happened, which
-    // could force the wrong daypart bucket (usually 'night', the longest one) and produce
-    // a bogus predicted time completely unrelated to what the app would have shown live.
+    // 回測 (retrospective): reconstruct as of fTime, not the real current moment — without
+    // this, "minutes since the last feed" etc. inside predictNextFeed were measured against
+    // whenever someone happened to check the overlay, not against when this feed actually
+    // happened, which could force the wrong daypart bucket (usually 'night', the longest one)
+    // and produce a bogus predicted time completely unrelated to what the app would have
+    // shown live. Always recomputed with the *current* algorithm.
     const pred = predictNextFeed(before, alarmOffsetMinutes, fTime);
     const predictedMl = predictNextAmount(before, babyBirthDate);
     const actualMl = f.amountMl || 0;
-    if (pred.status !== 'ok') return { id: f.id, actualTime: fTime, actualMl, predictedTime: null, predictedMl, timeErrorMin: null, mlError: null };
-    return {
+    // 即測 (live snapshot): the prediction the app actually *displayed* for "next feed" right
+    // after the previous feed was logged, frozen onto that previous feed at the time (see
+    // App._snapshotLivePrediction). Unlike 回測 this reflects the algorithm version and the
+    // real-time vantage point (incl. any lag from backfilling) that were live back then — so
+    // comparing the two shows whether a later algorithm change actually helped, and surfaces
+    // errors that only real-world use (not idealised instant logging) produces. Only present
+    // for feeds recorded after this feature shipped; older feeds show 回測 alone.
+    const idx = feeds.findIndex(x => x.id === f.id);
+    const prevFeed = idx > 0 ? feeds[idx - 1] : null;
+    let liveTime = null, liveMl = null, liveTimeErrorMin = null, liveMlError = null;
+    if (prevFeed && prevFeed.predNextTime) {
+      liveTime = new Date(prevFeed.predNextTime);
+      liveMl = prevFeed.predNextMl != null ? prevFeed.predNextMl : null;
+      liveTimeErrorMin = Math.round((fTime - liveTime) / 60000);
+      liveMlError = liveMl != null ? actualMl - liveMl : null;
+    }
+    const live = { liveTime, liveMl, liveTimeErrorMin, liveMlError };
+    if (pred.status !== 'ok') return Object.assign({ id: f.id, actualTime: fTime, actualMl, predictedTime: null, predictedMl, timeErrorMin: null, mlError: null }, live);
+    return Object.assign({
       id: f.id, actualTime: fTime, actualMl, predictedTime: pred.nextTime, predictedMl,
       timeErrorMin: Math.round((fTime - pred.nextTime) / 60000),
       mlError: predictedMl != null ? actualMl - predictedMl : null,
-    };
+    }, live);
   });
 }
 

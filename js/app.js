@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.23.3';
+const APP_VERSION = '2.24.0';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -344,7 +344,8 @@ const App = {
     const t = new Date(ry, rm - 1, rd); t.setHours(s.rt.h, s.rt.m, 0, 0);
     const type = s.recordType;
     if (type === 'milk') {
-      Store.addEvent('milk', t, { breastMl: s.milkBreast, formulaMl: s.milkFormula, amountMl: s.milkBreast + s.milkFormula });
+      const ev = Store.addEvent('milk', t, { breastMl: s.milkBreast, formulaMl: s.milkFormula, amountMl: s.milkBreast + s.milkFormula });
+      this._snapshotLivePrediction(ev);
       this.set({ sheet: null });
       this.toast('🍼', '喝奶記錄了！');
     } else {
@@ -355,6 +356,23 @@ const App = {
       this.set({ sheet: null });
       this.toast(map[type][0], map[type][1], other, ev.id);
     }
+  },
+  // 即測 (live-prediction snapshot): the instant a feed is logged, freeze what the live
+  // "next feed" prediction now says onto that feed, so it can later be compared against the
+  // feed that actually follows (see analyzeTodayPredictionAccuracy's `live*` fields and the
+  // timeline's 即測 line). Only when this feed is the latest milk feed — backdating a
+  // forgotten record shouldn't attach a "predicted next feed" made from the vantage point of
+  // now onto a feed that already has a real later feed after it (that next feed is no longer
+  // unknown, so the snapshot would be meaningless). A poop/pee logged later doesn't count as
+  // a "later feed" and doesn't block this.
+  _snapshotLivePrediction(ev) {
+    const evTime = new Date(ev.time).getTime();
+    const laterFeed = Store.liveEvents().some(e => e.id !== ev.id && e.type === 'milk' && new Date(e.time).getTime() > evTime);
+    if (laterFeed) return;
+    const pred = predictNextFeed(Store.data.events, Store.data.settings.alarmOffsetMinutes || 0);
+    if (!pred || pred.status !== 'ok' || !pred.nextTime) return;
+    const ml = predictNextAmount(Store.data.events, Store.data.settings.babyBirth);
+    Store.updateEvent(ev.id, { predNextTime: pred.nextTime.toISOString(), predNextMl: ml });
   },
   addOther() {
     const t = this.state.toast;
