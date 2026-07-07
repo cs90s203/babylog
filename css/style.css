@@ -107,6 +107,29 @@ button {
 @keyframes growBar { from { transform: scaleY(0) } to { transform: scaleY(1) } }
 @keyframes chipGlow { 0% { box-shadow: 0 0 0 0 var(--accent), 0 1px 3px var(--shadow) } 35% { box-shadow: 0 0 14px 4px var(--accent), 0 1px 3px var(--shadow) } 100% { box-shadow: 0 0 0 0 var(--accent), 0 1px 3px var(--shadow) } }
 
+/* Weekly caregiver-champion celebration overlay (see renderCelebration / App.startFireworks).
+   Sits above everything (nav z20, sheets z50) at z60. Backdrop is ~50% so the app stays faintly
+   visible behind the fireworks. Fireworks are SVG circles spawned by JS into #fw and animated by
+   the fwBurst keyframe (translate outward + fade); the app re-render can swap #fw, so the JS loop
+   re-queries it each burst. Colours match the app (gold #F0A500 / coral #FF8C6B). */
+.cele-overlay { position: absolute; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center;
+  background: rgba(10,8,4,.5); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); animation: celeFade .35s ease both; }
+.cele-fw { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.cele-fw circle { transform-box: fill-box; transform-origin: center; }
+.cele-card { position: relative; z-index: 2; width: 86%; max-width: 340px; text-align: center; padding: 6px 10px; }
+.cele-ribbon { font-size: 16px; font-weight: 800; letter-spacing: .5px; margin-bottom: 10px; background: linear-gradient(90deg,#F0A500,#FF8C6B); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.cele-medal { font-size: 80px; line-height: 1; filter: drop-shadow(0 6px 22px rgba(240,165,0,.55)); animation: celePop .55s cubic-bezier(.17,.9,.4,1.35) both; }
+.cele-name { font-size: 44px; font-weight: 900; color: #fff; letter-spacing: 1px; margin: 8px 0 2px; text-shadow: 0 3px 30px rgba(240,165,0,.75); animation: celePop .55s .08s cubic-bezier(.17,.9,.4,1.35) both; }
+.cele-crown { font-size: 13px; font-weight: 700; color: #FFD98A; margin-bottom: 18px; animation: celeUp .5s .25s both; }
+.cele-stats { font-size: 18px; font-weight: 800; color: #FFE9C7; animation: celeUp .5s .35s both; }
+.cele-stats b { color: #FF8C6B; }
+.cele-week { margin-top: 9px; font-size: 12.5px; font-weight: 600; color: rgba(255,220,170,.55); animation: celeUp .5s .45s both; }
+.cele-hint { position: absolute; left: 0; right: 0; bottom: 30px; text-align: center; font-size: 11.5px; color: rgba(255,235,200,.42); animation: celeUp .6s .8s both; }
+@keyframes celeFade { from { opacity: 0 } to { opacity: 1 } }
+@keyframes celePop { 0% { transform: scale(.3); opacity: 0 } 100% { transform: scale(1); opacity: 1 } }
+@keyframes celeUp { from { opacity: 0; transform: translateY(8px) } to { opacity: 1; transform: translateY(0) } }
+@keyframes fwBurst { 0% { opacity: 1 } 100% { opacity: 0; transform: translate(var(--tx),var(--ty)) } }
+
 .btn-row { display: flex; gap: 10px; justify-content: space-between; }
 .round-btn { border: none; border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; }
 .sheet-overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,.5); backdrop-filter: blur(8px); z-index: 50; display: flex; align-items: flex-end; }

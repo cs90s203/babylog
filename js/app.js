@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.27.2';
+const APP_VERSION = '2.28.0';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -36,6 +36,7 @@ const App = {
     editDate: todayStr(), // which calendar date the edit sheet's time stepper applies to — see openEditRec/saveEdit
     recDate: todayStr(), // which calendar date the ADD-new-record sheets (milk/quick poop-pee-brush) apply to — see openMilk/startPress/confirmRecord
     recBy: '', // who handled it, for the ADD-new-record sheets (kept separate from editBy so add/edit flows don't cross-contaminate) — pre-filled to Store.caregiver on open, applies only to this one record
+    celebration: null, // { name, milk, diaper, weekLabel } while the weekly-champion fireworks overlay is showing (see renderCelebration/startFireworks)
     confirmDelId: null,
     dragId: null,
     justUpdatedId: null, // briefly set after a timeline drag commits, to glow that chip
@@ -444,6 +445,61 @@ const App = {
     Store.addEvent(t.addType, src ? new Date(src.time) : new Date(), src ? { by: src.by } : undefined);
     const m2 = { poop: ['💩', '也記了排便！'], pee: ['💧', '也記了尿尿！'] };
     this.toast(m2[t.addType][0], m2[t.addType][1]);
+  },
+
+  // ---- weekly caregiver-champion celebration ----
+  // TEMP TEST HOOK: fired from the 照顧者分擔 card title (see renderFeedStats) so the overlay
+  // can be reviewed on demand. Walks back from the current week to the most recent week that has
+  // any data. Remove this once the real Sunday-20:00 auto-trigger replaces it.
+  testCelebration() {
+    let champ = null;
+    for (let o = 0; o >= -8 && !champ; o--) champ = weeklyChampion(o);
+    if (!champ) { this.toast('🎉', '還沒有足夠的紀錄可以慶祝'); return; }
+    this.openCelebration(champ);
+  },
+  openCelebration(data) {
+    if (!data) return;
+    this.set({ celebration: data });
+    this.startFireworks(); // after set() — the #fw node now exists in the fresh DOM
+  },
+  closeCelebration() {
+    this.stopFireworks();
+    this.set({ celebration: null });
+  },
+  // Spawns SVG firework particles into #fw. Re-queries #fw on every burst (not once up front)
+  // because any unrelated re-render — e.g. a background sync landing — replaces the node while
+  // the overlay is open; grabbing it fresh each time keeps the show going across those swaps.
+  startFireworks() {
+    this.stopFireworks();
+    const NS = 'http://www.w3.org/2000/svg';
+    const colors = ['#F0A500', '#FF8C6B', '#FF7A56', '#E8A33D', '#FFD36E', '#FFFFFF'];
+    const burst = (cx, cy) => {
+      const svg = document.getElementById('fw');
+      if (!svg) return;
+      const color = colors[(Math.random() * colors.length) | 0];
+      const n = 18, base = 44 + Math.random() * 40;
+      for (let i = 0; i < n; i++) {
+        const a = Math.PI * 2 * i / n + Math.random() * 0.22;
+        const r = base * (0.65 + Math.random() * 0.6);
+        const c = document.createElementNS(NS, 'circle');
+        c.setAttribute('cx', cx); c.setAttribute('cy', cy);
+        c.setAttribute('r', (1.4 + Math.random() * 2).toFixed(1));
+        c.setAttribute('fill', Math.random() < 0.22 ? '#fff' : color);
+        c.style.setProperty('--tx', (Math.cos(a) * r).toFixed(1) + 'px');
+        c.style.setProperty('--ty', (Math.sin(a) * r + r * 0.4).toFixed(1) + 'px');
+        const dur = (850 + Math.random() * 750) | 0;
+        c.style.animation = 'fwBurst ' + dur + 'ms cubic-bezier(.15,.6,.4,1) forwards';
+        svg.appendChild(c);
+        setTimeout(() => c.remove(), dur + 60);
+      }
+    };
+    [[180, 150], [95, 110], [265, 120], [180, 250], [130, 190]].forEach((p, i) => setTimeout(() => burst(p[0], p[1]), i * 160));
+    this._fwInterval = setInterval(() => burst(40 + Math.random() * 280, 70 + Math.random() * 300), 480);
+    this._fwStopTimer = setTimeout(() => this.stopFireworks(), 14000); // stop launching after ~14s to spare the CPU; overlay stays until tapped
+  },
+  stopFireworks() {
+    clearInterval(this._fwInterval); clearTimeout(this._fwStopTimer);
+    this._fwInterval = null; this._fwStopTimer = null;
   },
 
   // ---- timeline interactions ----

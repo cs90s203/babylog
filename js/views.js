@@ -874,7 +874,10 @@ function renderFeedStats(state) {
   const cgRows = ranking.map((r, i) => `<div style="margin-bottom:${i === ranking.length - 1 ? 0 : 13}px;">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px;"><span style="font-size:14px;font-weight:700;color:var(--text);">${i === 0 && r.total > 0 ? '🏅 ' : ''}${esc(r.name)}</span><span style="font-size:12px;color:var(--text2);">🍼 ${r.milk} ・ 🧷 ${r.diaper}</span></div>
     <div style="height:8px;border-radius:4px;background:var(--card2);overflow:hidden;"><div style="width:${r.total / rkMax * 100}%;height:100%;border-radius:4px;background:${i === 0 ? 'linear-gradient(90deg,#F0A500,#FF8C6B)' : 'rgba(240,165,0,.35)'};"></div></div></div>`).join('');
-  const caregiverCard = sCard('照顧者分擔 💛', ranking.length ? (cgRows + `<p style="font-size:11px;color:var(--text3);margin-top:12px;text-align:center;">謝謝大家一起照顧寶寶 🌿</p>`) : `<p style="font-size:13px;color:var(--text3);text-align:center;padding:20px 0;">還沒有記錄</p>`);
+  // TEMP TEST HOOK: tapping the card title fires the celebration overlay with the current
+  // week's real champion, so it can be reviewed on demand. Revert this title to a plain
+  // '照顧者分擔 💛' string once the real Sunday-20:00 auto-trigger is wired in.
+  const caregiverCard = sCard('<span onclick="A.testCelebration()" style="cursor:pointer;">照顧者分擔 💛</span>', ranking.length ? (cgRows + `<p style="font-size:11px;color:var(--text3);margin-top:12px;text-align:center;">謝謝大家一起照顧寶寶 🌿</p>`) : `<p style="font-size:13px;color:var(--text3);text-align:center;padding:20px 0;">還沒有記錄</p>`);
 
   // "星期標籤底下顯示日期" — only meaningful for week mode, where each bucket really is a
   // single calendar day; month/year buckets are weeks/months so a day number wouldn't mean
@@ -1761,6 +1764,40 @@ function renderSheet(state) {
 }
 function sheetAnim(reopen) { return reopen ? 'animation:none;' : ''; }
 
+// Weekly caregiver champion for a given week offset (0 = current week, -1 = last week…).
+// Ranking mirrors the stats page's 照顧者分擔: total events (milk + everything else) per person,
+// tie broken by milk count, co-champions if still exactly equal. Returns null for an empty week
+// (nothing to celebrate). `diaper` is the non-milk tally shown next to the milk count.
+function weeklyChampion(weekOffset) {
+  const [from, to] = rangeBounds('week', weekOffset);
+  const evs = Store.liveEvents().filter(e => { const t = new Date(e.time); return t >= from && t <= to; });
+  if (!evs.length) return null;
+  const byMap = {};
+  evs.forEach(e => { const k = e.by || '未命名'; if (!byMap[k]) byMap[k] = { milk: 0, other: 0 }; if (e.type === 'milk') byMap[k].milk++; else byMap[k].other++; });
+  const ranking = Object.keys(byMap).map(name => ({ name, milk: byMap[name].milk, other: byMap[name].other, total: byMap[name].milk + byMap[name].other }))
+    .sort((a, b) => b.total - a.total || b.milk - a.milk);
+  const top = ranking[0];
+  const champs = ranking.filter(r => r.total === top.total && r.milk === top.milk);
+  const name = champs.length > 1 ? champs.map(c => c.name).join('、') : top.name;
+  const weekLabel = `${from.getMonth() + 1}/${from.getDate()} – ${to.getMonth() + 1}/${to.getDate()}`;
+  return { name, milk: top.milk, diaper: top.other, weekLabel, tie: champs.length > 1 };
+}
+function renderCelebration(state) {
+  const c = state.celebration;
+  if (!c) return '';
+  return `<div class="cele-overlay" onclick="A.closeCelebration()">
+    <svg class="cele-fw" id="fw" viewBox="0 0 360 640" preserveAspectRatio="xMidYMid slice"></svg>
+    <div class="cele-card">
+      <div class="cele-ribbon">🎉 本週照顧冠軍 🎉</div>
+      <div class="cele-medal">🏅</div>
+      <div class="cele-name">${esc(c.name)}</div>
+      <div class="cele-crown">👑 本週最用心</div>
+      <div class="cele-stats">🍼 <b>${c.milk}</b> 次　・　🧷 <b>${c.diaper}</b> 次</div>
+      <div class="cele-week">${esc(c.weekLabel)} 這一週</div>
+    </div>
+    <div class="cele-hint">點任意處關閉</div>
+  </div>`;
+}
 function render(state) {
   _timelineMeta = null;
   // Every state change replaces #root's whole innerHTML (see module comment below), which
@@ -1777,6 +1814,7 @@ function render(state) {
     ${renderDeleteGrowthConfirm(state)}
     ${renderRenameConfirm(state)}
     ${renderWelcome(state)}
+    ${renderCelebration(state)}
     ${renderToast(state)}
   </div>`;
   const root = document.getElementById('root');
