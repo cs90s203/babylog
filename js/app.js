@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.28.0';
+const APP_VERSION = '2.28.1';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -82,6 +82,13 @@ const App = {
       if (mq.addEventListener) mq.addEventListener('change', handler);
     }
     this.rerender();
+    // Weekly champion celebration: check right away against locally-cached data (covers the
+    // common case where this device already has the week's records), then again the first time
+    // Firestore reports a completed sync, in case last week's data only lives on another device
+    // and hadn't reached here yet. maybeShowCelebration is idempotent (flag-guarded), so the two
+    // calls can't double-pop.
+    this.maybeShowCelebration();
+    Sync.onChange(() => { if (Sync.state === 'done') this.maybeShowCelebration(); });
     // Firestore's onSnapshot listeners (attached once signed in) stay live on their own —
     // no polling or pull-to-refresh needed, unlike the old GitHub-Contents-API sync.
     Sync.init();
@@ -448,13 +455,24 @@ const App = {
   },
 
   // ---- weekly caregiver-champion celebration ----
-  // TEMP TEST HOOK: fired from the 照顧者分擔 card title (see renderFeedStats) so the overlay
-  // can be reviewed on demand. Walks back from the current week to the most recent week that has
-  // any data. Remove this once the real Sunday-20:00 auto-trigger replaces it.
-  testCelebration() {
-    let champ = null;
-    for (let o = 0; o >= -8 && !champ; o--) champ = weeklyChampion(o);
-    if (!champ) { this.toast('🎉', '還沒有足夠的紀錄可以慶祝'); return; }
+  // Auto-trigger: on open, if a new weekly settle (Sunday 20:00) has passed that this DEVICE
+  // hasn't celebrated yet, pop the champion overlay. Once-per-device via a localStorage flag
+  // (per the design: same winner for everyone, each device shows it once, no cross-sync). Only
+  // ever the most recent settle — no backlog if you didn't open for several weeks. On the very
+  // first run there's no flag yet, so we just baseline to the current settle and start fresh
+  // from the NEXT Sunday rather than popping a possibly-stale week retroactively. An empty week
+  // is skipped without advancing the flag, so data that only syncs in after open can still be
+  // caught on a later check (see init: run at open + again once Firestore sync reports done).
+  maybeShowCelebration() {
+    if (this.state.showWelcome || this.state.celebration) return;
+    const settle = celebrationSettle(new Date());
+    const key = todayStr(settle);
+    const seen = Store.local('celebrated_week');
+    if (seen === key) return;
+    if (seen == null) { Store.local('celebrated_week', key); return; }
+    const champ = championForSettle(settle);
+    if (!champ) return;
+    Store.local('celebrated_week', key);
     this.openCelebration(champ);
   },
   openCelebration(data) {

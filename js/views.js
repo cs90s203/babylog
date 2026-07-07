@@ -874,10 +874,7 @@ function renderFeedStats(state) {
   const cgRows = ranking.map((r, i) => `<div style="margin-bottom:${i === ranking.length - 1 ? 0 : 13}px;">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px;"><span style="font-size:14px;font-weight:700;color:var(--text);">${i === 0 && r.total > 0 ? '🏅 ' : ''}${esc(r.name)}</span><span style="font-size:12px;color:var(--text2);">🍼 ${r.milk} ・ 🧷 ${r.diaper}</span></div>
     <div style="height:8px;border-radius:4px;background:var(--card2);overflow:hidden;"><div style="width:${r.total / rkMax * 100}%;height:100%;border-radius:4px;background:${i === 0 ? 'linear-gradient(90deg,#F0A500,#FF8C6B)' : 'rgba(240,165,0,.35)'};"></div></div></div>`).join('');
-  // TEMP TEST HOOK: tapping the card title fires the celebration overlay with the current
-  // week's real champion, so it can be reviewed on demand. Revert this title to a plain
-  // '照顧者分擔 💛' string once the real Sunday-20:00 auto-trigger is wired in.
-  const caregiverCard = sCard('<span onclick="A.testCelebration()" style="cursor:pointer;">照顧者分擔 💛</span>', ranking.length ? (cgRows + `<p style="font-size:11px;color:var(--text3);margin-top:12px;text-align:center;">謝謝大家一起照顧寶寶 🌿</p>`) : `<p style="font-size:13px;color:var(--text3);text-align:center;padding:20px 0;">還沒有記錄</p>`);
+  const caregiverCard = sCard('照顧者分擔 💛', ranking.length ? (cgRows + `<p style="font-size:11px;color:var(--text3);margin-top:12px;text-align:center;">謝謝大家一起照顧寶寶 🌿</p>`) : `<p style="font-size:13px;color:var(--text3);text-align:center;padding:20px 0;">還沒有記錄</p>`);
 
   // "星期標籤底下顯示日期" — only meaningful for week mode, where each bucket really is a
   // single calendar day; month/year buckets are weeks/months so a day number wouldn't mean
@@ -1764,13 +1761,24 @@ function renderSheet(state) {
 }
 function sheetAnim(reopen) { return reopen ? 'animation:none;' : ''; }
 
-// Weekly caregiver champion for a given week offset (0 = current week, -1 = last week…).
-// Ranking mirrors the stats page's 照顧者分擔: total events (milk + everything else) per person,
-// tie broken by milk count, co-champions if still exactly equal. Returns null for an empty week
-// (nothing to celebrate). `diaper` is the non-milk tally shown next to the milk count.
-function weeklyChampion(weekOffset) {
-  const [from, to] = rangeBounds('week', weekOffset);
-  const evs = Store.liveEvents().filter(e => { const t = new Date(e.time); return t >= from && t <= to; });
+// The weekly "settle" moment: the most recent Sunday 20:00 (local) at or before `now`. That's
+// when a Mon–Sun week's champion is locked in and becomes celebratable. On a Sunday before 20:00
+// this is still LAST Sunday, so the just-finishing week isn't celebrated until it actually settles.
+function celebrationSettle(now) {
+  const sun = new Date(now);
+  sun.setDate(now.getDate() - now.getDay()); // getDay(): Sun=0 → this calendar week's Sunday
+  sun.setHours(20, 0, 0, 0);
+  if (sun.getTime() > now.getTime()) sun.setDate(sun.getDate() - 7);
+  return sun;
+}
+// Champion of the Mon–Sun week that ends on `settle` (a Sunday). Ranking mirrors the stats page's
+// 照顧者分擔: total events (milk + everything else) per person, tie broken by milk count,
+// co-champions if still exactly equal. Returns null for an empty week (nothing to celebrate).
+// `diaper` is the non-milk tally shown next to the milk count.
+function championForSettle(settle) {
+  const weekEnd = new Date(settle); weekEnd.setHours(23, 59, 59, 999);
+  const weekStart = new Date(settle); weekStart.setDate(settle.getDate() - 6); weekStart.setHours(0, 0, 0, 0);
+  const evs = Store.liveEvents().filter(e => { const t = new Date(e.time); return t >= weekStart && t <= weekEnd; });
   if (!evs.length) return null;
   const byMap = {};
   evs.forEach(e => { const k = e.by || '未命名'; if (!byMap[k]) byMap[k] = { milk: 0, other: 0 }; if (e.type === 'milk') byMap[k].milk++; else byMap[k].other++; });
@@ -1779,7 +1787,7 @@ function weeklyChampion(weekOffset) {
   const top = ranking[0];
   const champs = ranking.filter(r => r.total === top.total && r.milk === top.milk);
   const name = champs.length > 1 ? champs.map(c => c.name).join('、') : top.name;
-  const weekLabel = `${from.getMonth() + 1}/${from.getDate()} – ${to.getMonth() + 1}/${to.getDate()}`;
+  const weekLabel = `${weekStart.getMonth() + 1}/${weekStart.getDate()} – ${weekEnd.getMonth() + 1}/${weekEnd.getDate()}`;
   return { name, milk: top.milk, diaper: top.other, weekLabel, tie: champs.length > 1 };
 }
 function renderCelebration(state) {
