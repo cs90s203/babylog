@@ -28,6 +28,7 @@ const firebaseConfig = {
 const FAMILIES = {
   default: ["cs90s203@gmail.com", "snowy5420@gmail.com", "lunamamahappy@gmail.com"],
   friendA: ["phoebe790322@gmail.com", "jumptoohigh@gmail.com"],
+  friendB: ["sanan282000@gmail.com"],
 };
 function familyIdForEmail(email) {
   for (const id in FAMILIES) if (FAMILIES[id].includes(email)) return id;

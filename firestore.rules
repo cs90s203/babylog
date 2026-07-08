@@ -16,6 +16,12 @@ service cloud.firestore {
           'jumptoohigh@gmail.com'
         ];
     }
+    function isFriendBFamily() {
+      return request.auth != null &&
+        request.auth.token.email in [
+          'sanan282000@gmail.com'
+        ];
+    }
 
     // Multi-family app: each family lives under its own families/{id} path, with its own
     // email whitelist below — these lists must stay in sync with FAMILIES in
@@ -27,6 +33,9 @@ service cloud.firestore {
     }
     match /families/friendA/{document=**} {
       allow read, write: if isFriendAFamily();
+    }
+    match /families/friendB/{document=**} {
+      allow read, write: if isFriendBFamily();
     }
 
     // Deny everything else by default.
