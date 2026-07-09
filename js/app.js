@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.28.2';
+const APP_VERSION = '2.29.0';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -37,6 +37,11 @@ const App = {
     recDate: todayStr(), // which calendar date the ADD-new-record sheets (milk/quick poop-pee-brush) apply to — see openMilk/startPress/confirmRecord
     recBy: '', // who handled it, for the ADD-new-record sheets (kept separate from editBy so add/edit flows don't cross-contaminate) — pre-filled to Store.caregiver on open, applies only to this one record
     celebration: null, // { name, milk, diaper, weekLabel } while the weekly-champion fireworks overlay is showing (see renderCelebration/startFireworks)
+    nurse: null, // running direct-breastfeeding session {active:'left'|'right', left:sec, right:sec, since:ms, startWall:ms}; persisted to localStorage so it survives sleep/reload
+    nurseTutorial: false, // first-use nursing tutorial overlay showing
+    recSide: 'left', // nurse backfill sheet's chosen side
+    recNurseMin: 5, recNurseSec: 0, // nurse backfill/edit duration inputs
+    editSide: 'left', editNurseMin: 0, editNurseSec: 0, // nurse edit sheet's side + duration
     confirmDelId: null,
     dragId: null,
     justUpdatedId: null, // briefly set after a timeline drag commits, to glow that chip
@@ -74,6 +79,7 @@ const App = {
     Store.init();
     this.state.theme = Store.local('theme') || 'auto';
     this.state.showWelcome = !Store.caregiver;
+    this.state.nurse = this._loadNurse(); // resume a nursing session left running before reload/close
     Store.onChange(() => this.rerender());
     Sync.onChange(() => this.rerender());
     if (window.matchMedia) {
@@ -89,6 +95,7 @@ const App = {
     // calls can't double-pop.
     this.maybeShowCelebration();
     Sync.onChange(() => { if (Sync.state === 'done') this.maybeShowCelebration(); });
+    if (this.state.nurse) this._startNurseTick(); // resume the running dock timer after first render
     // Firestore's onSnapshot listeners (attached once signed in) stay live on their own —
     // no polling or pull-to-refresh needed, unlike the old GitHub-Contents-API sync.
     Sync.init();
@@ -417,6 +424,11 @@ const App = {
       this._snapshotLivePrediction(ev);
       this.set({ sheet: null });
       this.toast('🍼', '喝奶記錄了！');
+    } else if (type === 'nurse') {
+      const durationSec = (s.recNurseMin || 0) * 60 + (s.recNurseSec || 0);
+      Store.addEvent('nurse', t, { side: s.recSide === 'right' ? 'right' : 'left', durationSec, by });
+      this.set({ sheet: null });
+      this.toast('🤱', '親餵補記了！');
     } else {
       Store.addEvent(type, t, { by });
       const ev = Store.data.events[Store.data.events.length - 1];
@@ -520,6 +532,97 @@ const App = {
     this._fwInterval = null; this._fwStopTimer = null;
   },
 
+  // ---- direct breastfeeding (nurse) timer ----
+  // Model: one session at a time, with a per-side accumulator. Tapping the OTHER side switches
+  // (freezes this side, starts the other); tapping the ACTIVE side stops and records. On stop,
+  // each side with >= NURSE_MINKEEP seconds becomes its own record; shorter segments (mis-taps)
+  // are dropped. Elapsed is always computed from the wall-clock start (`since`), so phone sleep /
+  // backgrounding / reload never drifts it; the session is persisted to localStorage and resumed
+  // on launch. The dock DOM is patched directly each tick (re-queried, survives re-renders) so
+  // the running number doesn't trigger a full app re-render every 500ms.
+  NURSE_AUTO: 5400, NURSE_MINKEEP: 10,
+  _nurseTick: null,
+  _loadNurse() { try { return JSON.parse(Store.local('nurse_session') || 'null'); } catch (e) { return null; } },
+  _saveNurse() { Store.local('nurse_session', this.state.nurse ? JSON.stringify(this.state.nurse) : ''); },
+  nurseFmt(sec) { sec = Math.floor(sec); if (sec < 60) return sec + 's'; if (sec < 3600) return Math.floor(sec / 60) + 'm'; const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60); return h + 'h' + m + 'm'; },
+  _nurseElapsed() { const s = this.state.nurse; return s ? s[s.active] + (Date.now() - s.since) / 1000 : 0; },
+  _nurseUpdateDock() {
+    const s = this.state.nurse;
+    ['left', 'right'].forEach(sd => {
+      const col = document.getElementById('nb-col-' + sd), t = document.getElementById('nb-t-' + sd);
+      if (!col || !t) return;
+      col.classList.remove('active', 'paused');
+      if (s && s.active === sd) { col.classList.add('active'); t.textContent = this.nurseFmt(this._nurseElapsed()); }
+      else if (s && s[sd] > 0) { col.classList.add('paused'); t.textContent = this.nurseFmt(s[sd]); }
+      else { t.textContent = ''; }
+    });
+  },
+  _startNurseTick() {
+    this._stopNurseTick();
+    this._nurseTick = setInterval(() => {
+      if (!this.state.nurse) { this._stopNurseTick(); return; }
+      if (this._nurseElapsed() >= this.NURSE_AUTO) { this._commitNurse(true); return; }
+      this._nurseUpdateDock();
+    }, 500);
+    this._nurseUpdateDock();
+  },
+  _stopNurseTick() { clearInterval(this._nurseTick); this._nurseTick = null; },
+  nurseTap(side) {
+    // First-ever tap opens the tutorial instead of starting the timer.
+    if (!Store.local('nurse_tutorial_seen')) { this.set({ nurseTutorial: true }); return; }
+    const s = this.state.nurse;
+    if (!s) { this.state.nurse = { active: side, left: 0, right: 0, since: Date.now(), startWall: Date.now() }; this._saveNurse(); this._startNurseTick(); return; }
+    if (side === s.active) { this._commitNurse(false); return; }
+    s[s.active] += (Date.now() - s.since) / 1000; // freeze the current side
+    s.active = side; s.since = Date.now();
+    this._saveNurse(); this._nurseUpdateDock();
+  },
+  _commitNurse(auto) {
+    const s = this.state.nurse; if (!s) return;
+    s[s.active] += (Date.now() - s.since) / 1000; // finalize the active segment
+    const startWall = s.startWall || Date.now();
+    const recs = [];
+    ['left', 'right'].forEach(sd => { const sec = Math.round(s[sd]); if (sec >= this.NURSE_MINKEEP) recs.push({ side: sd, sec }); });
+    this.state.nurse = null; this._saveNurse(); this._stopNurseTick();
+    recs.forEach(r => Store.addEvent('nurse', new Date(startWall), { side: r.side, durationSec: r.sec }));
+    this.rerender();
+    if (recs.length) this.toast('🤱', (auto ? '自動停止・' : '') + '已記錄 ' + recs.map(r => (r.side === 'left' ? 'L' : 'R') + ' ' + this.nurseFmt(r.sec)).join('、'));
+    else this.toast('🤱', '太短，未記錄');
+  },
+  // Long-press a dock button → manual backfill sheet for a forgotten session, side pre-set.
+  startNursePress(side) {
+    this._nurseLongFired = false;
+    clearTimeout(this._nursePressTimer);
+    if (this.state.nurse || !Store.local('nurse_tutorial_seen')) return; // no long-press while timing / before tutorial
+    this._nursePressTimer = setTimeout(() => { this._nurseLongFired = true; this.openNurseBackfill(side); }, 1000);
+  },
+  endNursePress() { clearTimeout(this._nursePressTimer); },
+  onNurseTapGuard(side) { if (this._nurseLongFired) { this._nurseLongFired = false; return; } this.nurseTap(side); },
+  openNurseBackfill(side) {
+    const n = new Date();
+    this.set({ sheet: 'nurse', recordType: 'nurse', recSide: side, recNurseMin: 5, recNurseSec: 0, rt: { h: n.getHours(), m: Math.round(n.getMinutes() / 5) * 5 % 60 }, recDate: todayStr(), recBy: Store.caregiver || '' });
+  },
+  pickRecSide(side) { this.set({ recSide: side }); },
+  onRecNurseMin(v) { this.state.recNurseMin = Math.max(0, parseInt(v, 10) || 0); },
+  onRecNurseSec(v) { this.state.recNurseSec = Math.min(59, Math.max(0, parseInt(v, 10) || 0)); },
+  // "繼續計時" from the edit sheet — resume timing a recorded session from its saved duration.
+  resumeNurse(id) {
+    const rec = Store.data.events.find(e => e.id === id);
+    if (!rec) return;
+    Store.deleteEvent(id); // fold the old record back into the resumed session
+    const sec = rec.durationSec || 0;
+    const side = rec.side === 'right' ? 'right' : 'left';
+    this.state.nurse = { active: side, left: side === 'left' ? sec : 0, right: side === 'right' ? sec : 0, since: Date.now(), startWall: new Date(rec.time).getTime() };
+    this._saveNurse();
+    this.set({ sheet: null });
+    this._startNurseTick();
+  },
+  pickEditSide(side) { this.set({ editSide: side }); },
+  onEditNurseMin(v) { this.state.editNurseMin = Math.max(0, parseInt(v, 10) || 0); },
+  onEditNurseSec(v) { this.state.editNurseSec = Math.min(59, Math.max(0, parseInt(v, 10) || 0)); },
+  resetNurseTutorial() { Store.local('nurse_tutorial_seen', ''); this.toast('🤱', '教學已重置，下次點親餵鈕會再出現'); },
+  closeNurseTutorial() { Store.local('nurse_tutorial_seen', '1'); this.set({ nurseTutorial: false }); },
+
   // ---- timeline interactions ----
   toggleGap(key) {
     const cur = this.state.expandedGaps;
@@ -529,6 +632,7 @@ const App = {
     const dt = new Date(rec.time);
     const st = { sheet: 'editRec', editingId: rec.id, recordType: rec.type, rt: { h: dt.getHours(), m: dt.getMinutes() }, editDate: todayStr(dt), editBy: rec.by || Store.caregiver || '' };
     if (rec.type === 'milk') { st.milkBreast = rec.breastMl || 0; st.milkFormula = rec.formulaMl || 0; }
+    if (rec.type === 'nurse') { st.editSide = rec.side === 'right' ? 'right' : 'left'; const d = rec.durationSec || 0; st.editNurseMin = Math.floor(d / 60); st.editNurseSec = d % 60; }
     this.set(st);
   },
   onEditDate(v) { this.set({ editDate: v }); },
@@ -560,6 +664,7 @@ const App = {
     const t = this._editDateTime();
     const patch = { type: s.recordType, time: t.toISOString(), by: this._editByValue() };
     if (s.recordType === 'milk') Object.assign(patch, { breastMl: s.milkBreast, formulaMl: s.milkFormula, amountMl: s.milkBreast + s.milkFormula });
+    if (s.recordType === 'nurse') Object.assign(patch, { side: s.editSide === 'right' ? 'right' : 'left', durationSec: (s.editNurseMin || 0) * 60 + (s.editNurseSec || 0) });
     Store.updateEvent(s.editingId, patch);
     this.set({ sheet: null });
     this.toast('✏️', '已更新');

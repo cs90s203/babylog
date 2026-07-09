@@ -25,7 +25,9 @@ function subjectFor(ev) {
     const tag = mix ? '混合' : ((ev.formulaMl || 0) > 0 ? '配方乳' : '母乳');
     return `🍼 喝奶 ${ev.amountMl || 0}ml（${tag}）`;
   }
+  if (ev.type === 'nurse') { const sd = ev.side === 'right' ? '右' : '左'; const sec = ev.durationSec || 0; return `🤱 親餵 ${sd}（${Math.floor(sec / 60)}分${sec % 60}秒）`; }
   if (ev.type === 'poop') return '💩 排便';
+  if (ev.type === 'brush') return '👄 刷牙';
   return '💧 尿尿';
 }
 
@@ -34,6 +36,8 @@ function durationKeyOf(type) { return type === 'milk' ? 'milk' : type; }
 // Resolve [start, end] Date objects for an event given settings.duration.
 function resolveRange(ev, duration) {
   const t = new Date(ev.time);
+  // Nursing carries its own real measured duration — start at `time`, end that many seconds later.
+  if (ev.type === 'nurse') return [t, new Date(t.getTime() + (ev.durationSec || 0) * 1000)];
   const cfg = duration[durationKeyOf(ev.type)] || { mode: 'end', minutes: 0 };
   const ms = (cfg.minutes || 0) * 60000;
   if (cfg.mode === 'start') return [t, new Date(t.getTime() + ms)];

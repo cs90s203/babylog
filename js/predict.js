@@ -62,7 +62,12 @@ function validFeedDates(feeds, now) {
 // (see analyzeTodayPredictionAccuracy) — defaults to the real current time for the live
 // home-screen prediction, where there's no earlier moment to pretend it is.
 function predictNextFeed(events, alarmOffsetMinutes, asOf) {
-  const feeds = events.filter(e => e.type === 'milk').slice().sort((a, b) => new Date(a.time) - new Date(b.time));
+  // Direct breastfeeding ('nurse') counts as a feed for TIMING (intervals, first/last-of-day,
+  // dayparts) even though it carries no ml — a nursed baby still shifts the feeding rhythm, so
+  // the next-feed-time prediction must see it. It contributes 0 to the ml totals, so avgMlPerDay
+  // stays a milk-only figure (correct); the amount prediction (predictNextAmount) filters nurse
+  // out separately since there's no ml to learn from.
+  const feeds = events.filter(e => e.type === 'milk' || e.type === 'nurse').slice().sort((a, b) => new Date(a.time) - new Date(b.time));
   if (feeds.length < 2) return { status: 'collecting' };
 
   const first = new Date(feeds[0].time), last = new Date(feeds[feeds.length - 1].time);

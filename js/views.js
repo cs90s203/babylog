@@ -11,10 +11,12 @@ function hm(date) {
 }
 function fracOf(date) { return date.getHours() + date.getMinutes() / 60; }
 
+const NURSE_COLOR = '#EC7FA0'; // rose — direct breastfeeding, distinct from bottle coral
 function milkColorOf(ev) { return (ev.breastMl > 0 && ev.formulaMl > 0) ? '#C77D52' : ((ev.formulaMl > 0) ? '#E8A33D' : '#FF8C6B'); }
-function dotColor(ev) { return ev.type === 'milk' ? milkColorOf(ev) : ev.type === 'poop' ? '#C8965A' : ev.type === 'brush' ? '#5BBFA0' : '#79C3F0'; }
-function tintBg(ev) { return ev.type === 'milk' ? ((ev.breastMl > 0 && ev.formulaMl > 0) ? 'var(--tMix)' : (ev.formulaMl > 0 ? 'var(--tMilkF)' : 'var(--tMilkB)')) : ev.type === 'poop' ? 'var(--tPoop)' : ev.type === 'brush' ? 'var(--tBrush)' : 'var(--tPee)'; }
-function emojiOf(t) { return t === 'milk' ? '🍼' : t === 'poop' ? '💩' : t === 'brush' ? '👄' : '💧'; }
+function dotColor(ev) { return ev.type === 'milk' ? milkColorOf(ev) : ev.type === 'nurse' ? NURSE_COLOR : ev.type === 'poop' ? '#C8965A' : ev.type === 'brush' ? '#5BBFA0' : '#79C3F0'; }
+function tintBg(ev) { return ev.type === 'milk' ? ((ev.breastMl > 0 && ev.formulaMl > 0) ? 'var(--tMix)' : (ev.formulaMl > 0 ? 'var(--tMilkF)' : 'var(--tMilkB)')) : ev.type === 'nurse' ? 'var(--tNurse)' : ev.type === 'poop' ? 'var(--tPoop)' : ev.type === 'brush' ? 'var(--tBrush)' : 'var(--tPee)'; }
+function emojiOf(t) { return t === 'milk' ? '🍼' : t === 'nurse' ? '🤱' : t === 'poop' ? '💩' : t === 'brush' ? '👄' : '💧'; }
+function nurseDurLabel(sec) { sec = Math.floor(sec || 0); if (sec < 60) return sec + 's'; if (sec < 3600) return Math.floor(sec / 60) + 'm'; const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60); return h + 'h' + m + 'm'; }
 // Baby profile avatar — a photo (compressed thumbnail, see App.handleAvatarFile) takes
 // precedence over the emoji when both are set. Tapping the circle opens the picker sheet.
 function babyAvatarInner(s, sizePx) {
@@ -132,8 +134,13 @@ function renderPrediction() {
     let cd;
     if (rem > 0) { const rh = Math.floor(rem / 60), rm = Math.round(rem % 60); cd = '⏱ ' + (rh > 0 ? `還有 ${rh}h ${rm}m` : `還有 ${rm}m`); }
     else cd = '✨ 現在可以餵囉';
+    // ml prediction only makes sense with enough bottle-fed history; a mostly-nursed baby has
+    // too few ml data points, so show "資訊不足" instead of a misleading number.
+    const bottleCount = Store.liveEvents().filter(e => e.type === 'milk' && (e.amountMl || 0) > 0).length;
     const amt = AppRef().predictAmount();
-    const amtLabel = amt != null ? `<span style="font-size:16px;font-weight:700;color:var(--text2);">・約${amt}ml</span>` : '';
+    const amtLabel = bottleCount < 3
+      ? `<span style="font-size:13px;font-weight:600;color:var(--text3);">・ml 資訊不足</span>`
+      : (amt != null ? `<span style="font-size:16px;font-weight:700;color:var(--text2);">・約${amt}ml</span>` : '');
     return `<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;">
       <div>
         <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.8px;margin-bottom:5px;">預計下一餐</p>
@@ -446,6 +453,10 @@ function renderTodayTimeline(state) {
       const amt = mix ? (r.breastMl + '+' + r.formulaMl + 'ml') : ((r.formulaMl > 0 ? r.formulaMl : r.breastMl) + 'ml');
       kids += `<span style="color:${milkColorOf(r)};">${amt}</span>`;
       if (!compact) { const tag = mix ? '混合' : (r.formulaMl > 0 ? '配方乳' : '母乳'); kids += `<span style="font-size:10px;font-weight:700;color:${milkColorOf(r)};">${tag}</span>`; }
+    } else if (r.type === 'nurse') {
+      const sd = r.side === 'right' ? 'R' : 'L';
+      kids += `<span style="color:${NURSE_COLOR};font-weight:800;">${sd}</span><span style="color:${NURSE_COLOR};">${nurseDurLabel(r.durationSec)}</span>`;
+      if (!compact) kids += `<span style="font-size:10px;font-weight:700;color:${NURSE_COLOR};">親餵</span>`;
     } else {
       const full = { poop: '排便', pee: '尿尿', brush: '刷牙' }[r.type];
       const short = { poop: '便', pee: '尿', brush: '牙' }[r.type];
@@ -937,7 +948,29 @@ function renderFeedStats(state) {
   // the finger without fighting the page's up/down scroll).
   const swipeCharts = `<div id="stats-swipe" style="touch-action:pan-y;will-change:transform;" onpointerdown="A.startStatsSwipe(event.clientX, event.clientY)">${milkChart}${amtChart}${diaperChart}${sleepChart}</div>`;
 
-  return rangeTabs + summary + caregiverCard + swipeCharts;
+  // Direct-breastfeeding left/right comparison (count + total time per side), only shown when
+  // there's nursing data in this period.
+  const nurseEvs = evs.filter(e => e.type === 'nurse');
+  let nurseCard = '';
+  if (nurseEvs.length) {
+    const agg = { left: { n: 0, sec: 0 }, right: { n: 0, sec: 0 } };
+    nurseEvs.forEach(e => { const sd = e.side === 'right' ? 'right' : 'left'; agg[sd].n++; agg[sd].sec += e.durationSec || 0; });
+    const durLabel = (sec) => { sec = Math.floor(sec); const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60); return h > 0 ? `${h}h${m}m` : (m > 0 ? `${m}m` : `${sec}s`); };
+    const totalSec = agg.left.sec + agg.right.sec || 1;
+    const lPct = Math.round(agg.left.sec / totalSec * 100);
+    const sideRow = (label, a, color) => `<div style="flex:1;text-align:center;"><p style="font-size:15px;font-weight:800;color:${color};line-height:1;">${a.n} 次</p><p style="font-size:12px;color:var(--text2);font-weight:700;margin-top:3px;">${durLabel(a.sec)}</p><p style="font-size:10px;color:var(--text3);margin-top:2px;">${label}</p></div>`;
+    nurseCard = sCard('親餵左右 🤱', `<div style="display:flex;align-items:center;">
+        ${sideRow('🤱 左 L', agg.left, NURSE_COLOR)}
+        <div style="width:1px;align-self:stretch;background:var(--line);margin:0 6px;"></div>
+        ${sideRow('🤱 右 R', agg.right, NURSE_COLOR)}
+      </div>
+      <div style="height:8px;border-radius:4px;overflow:hidden;display:flex;margin-top:14px;background:var(--card2);">
+        <div style="width:${lPct}%;background:${NURSE_COLOR};"></div>
+        <div style="flex:1;background:${NURSE_COLOR}66;"></div>
+      </div>
+      <p style="font-size:10.5px;color:var(--text3);margin-top:8px;text-align:center;">左 ${lPct}% ・ 右 ${100 - lPct}%（依總時長）</p>`);
+  }
+  return rangeTabs + summary + caregiverCard + nurseCard + swipeCharts;
 }
 function bucketize(range, evs, type) {
   const now = new Date();
@@ -1238,8 +1271,8 @@ function renderMultiDayTimeline(dates, activeTypes) {
       const y = (t.getHours() + t.getMinutes() / 60) * DAY_PX_PER_HOUR;
       const itemsHtml = g.items.map(e => {
         if (level === 2) return `<span onclick='A.openEditRec(${JSON.stringify(e).replace(/'/g, "&#39;")})' style="font-size:13px;cursor:pointer;">${emojiOf(e.type)}</span>`;
-        const amt = e.type === 'milk' ? ((e.formulaMl > 0 ? e.formulaMl : e.breastMl) + (e.breastMl > 0 && e.formulaMl > 0 ? '+' + e.breastMl : '')) + 'ml' : '';
-        const full = { poop: '排便', pee: '尿尿', brush: '刷牙' }[e.type] || '';
+        const amt = e.type === 'milk' ? ((e.formulaMl > 0 ? e.formulaMl : e.breastMl) + (e.breastMl > 0 && e.formulaMl > 0 ? '+' + e.breastMl : '')) + 'ml' : e.type === 'nurse' ? ((e.side === 'right' ? 'R' : 'L') + nurseDurLabel(e.durationSec)) : '';
+        const full = { poop: '排便', pee: '尿尿', brush: '刷牙', nurse: '親餵' }[e.type] || '';
         const label = level === 1 ? (amt || full) : [amt, full].filter(Boolean).join(' ');
         return `<div onclick='A.openEditRec(${JSON.stringify(e).replace(/'/g, "&#39;")})' style="display:inline-flex;align-items:center;gap:3px;background:${tintBg(e)};border-radius:8px;padding:2px 6px;font-size:${level === 1 ? 10 : 11}px;font-weight:700;color:var(--text);white-space:nowrap;cursor:pointer;box-shadow:0 1px 3px var(--shadow);margin:1px;">${emojiOf(e.type)}${label ? `<span>${label}</span>` : ''}</div>`;
       }).join('');
@@ -1477,6 +1510,14 @@ function renderSettings(state) {
       </div>
     </div>
 
+    <div style="padding:0 16px 24px;">
+      ${sectionLabel('親餵 🤱')}
+      <div class="card" style="padding:16px;">
+        <p style="font-size:11px;color:var(--text3);margin-bottom:12px;line-height:1.5;">右下角兩顆 L / R 是親餵計時鈕。忘記怎麼用時，可以重看一次操作教學。</p>
+        <button onclick="A.resetNurseTutorial()" style="width:100%;background:var(--card2);border:1.5px solid var(--inpBorder);border-radius:16px;padding:13px;font-size:14px;font-weight:700;color:var(--text);">🔄 重置親餵教學</button>
+      </div>
+    </div>
+
     <div style="text-align:center;padding:24px 0 8px;color:var(--text3);font-size:11px;letter-spacing:.05em;">
       v${APP_VERSION}
     </div>
@@ -1532,6 +1573,18 @@ function caregiverPickerHtml(selected, pickAction, inputId) {
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">${allCaregiverNames().map(n => `<button onclick="A.${pickAction}('${esc(n).replace(/'/g, "&#39;")}')" style="padding:8px 14px;border:none;border-radius:12px;font-size:13px;font-weight:700;font-family:inherit;background:${n === selected ? 'var(--accent)' : 'var(--card2)'};color:${n === selected ? '#fff' : 'var(--text2)'};">${esc(n)}</button>`).join('')}</div>
     <input id="${inputId}" type="text" value="${esc(selected)}" placeholder="或輸入新名字" style="margin-bottom:14px;" />`;
 }
+// Side (L/R) toggle + minutes/seconds duration inputs, shared by the nurse backfill and edit
+// sheets. min/sec have no onchange-rerender risk (plain number inputs read on their own change).
+function nurseSideDurationHtml(side, min, sec, pickAction, minAction, secAction) {
+  const sBtn = (v, label) => `<button onclick="A.${pickAction}('${v}')" style="flex:1;padding:11px;border-radius:14px;border:none;font-size:15px;font-weight:${side === v ? 800 : 600};font-family:inherit;background:${side === v ? NURSE_COLOR : 'var(--card2)'};color:${side === v ? '#fff' : 'var(--text2)'};">${label}</button>`;
+  return `<p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin:16px 0 8px;">哪一邊</p>
+    <div style="display:flex;gap:8px;margin-bottom:14px;">${sBtn('left', '🤱 左 L')}${sBtn('right', '🤱 右 R')}</div>
+    <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">時長</p>
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;">
+      <input type="number" min="0" value="${min}" onchange="A.${minAction}(this.value)" style="flex:1;text-align:center;" /><span style="color:var(--text2);font-weight:700;">分</span>
+      <input type="number" min="0" max="59" value="${sec}" onchange="A.${secAction}(this.value)" style="flex:1;text-align:center;" /><span style="color:var(--text2);font-weight:700;">秒</span>
+    </div>`;
+}
 function renderMilkSheet(state, reopen) {
   return `<div class="sheet-overlay" onclick="A.closeSheet()">
     <div class="sheet" onclick="event.stopPropagation()" onpointerdown="A.startSheetDrag(event)" style="${sheetAnim(reopen)}">
@@ -1570,6 +1623,23 @@ function renderEditSheet(state, reopen) {
     </div>
   </div>`;
 }
+function renderNurseSheet(state, reopen) {
+  return `<div class="sheet-overlay" onclick="A.closeSheet()">
+    <div class="sheet" onclick="event.stopPropagation()" onpointerdown="A.startSheetDrag(event)" style="${sheetAnim(reopen)}">
+      <div class="sheet-handle"></div>
+      <h2 style="font-size:23px;font-weight:800;margin-bottom:6px;color:var(--text);">補記親餵 🤱</h2>
+      <p style="font-size:13px;color:var(--text2);margin-bottom:18px;">補之前忘了計時的親餵。</p>
+      <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">日期</p>
+      <input type="date" value="${esc(state.recDate)}" onchange="A.onRecDate(this.value)" style="margin-bottom:16px;" />
+      <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">開始時間</p>
+      ${timeStepper(state)}
+      ${nurseSideDurationHtml(state.recSide, state.recNurseMin, state.recNurseSec, 'pickRecSide', 'onRecNurseMin', 'onRecNurseSec')}
+      ${caregiverPickerHtml(state.recBy, 'pickRecBy', 'f-rec-by')}
+      <button onclick="A.confirmRecord()" class="primary-btn" style="margin-top:6px;">✓ 完成記錄</button>
+      <button onclick="A.closeSheet()" class="text-btn">取消</button>
+    </div>
+  </div>`;
+}
 function renderEditRecSheet(state, reopen) {
   const isMilk = state.recordType === 'milk';
   // Brush is neither milk nor a poop/pee pairable "diaper" event — it just gets the plain
@@ -1597,6 +1667,7 @@ function renderEditRecSheet(state, reopen) {
       ${timeStepper(state)}
       ${typeSeg}
       ${milkBlock}
+      ${state.recordType === 'nurse' ? nurseSideDurationHtml(state.editSide, state.editNurseMin, state.editNurseSec, 'pickEditSide', 'onEditNurseMin', 'onEditNurseSec') + `<button onclick="A.resumeNurse('${state.editingId}')" style="width:100%;background:var(--card2);border:1.5px dashed ${NURSE_COLOR};border-radius:14px;padding:12px;font-size:14px;font-weight:700;color:${NURSE_COLOR};margin-bottom:6px;">▶ 繼續計時（接續這筆）</button>` : ''}
       ${caregiverPickerHtml(state.editBy, 'pickEditBy', 'f-edit-by')}
       <button onclick="A.saveEdit()" class="primary-btn" style="padding:16px;font-size:16px;">✓ 儲存變更</button>
       <button onclick="A.deleteFromEdit()" style="width:100%;background:transparent;border:none;padding:12px;font-size:14px;font-weight:700;color:#E5573D;margin-top:4px;">🗑️ 刪除這筆</button>
@@ -1651,7 +1722,7 @@ function renderDeleteConfirm(state) {
   const rec = Store.data.events.find(e => e.id === state.confirmDelId);
   if (!rec) return '';
   const mix = rec.breastMl > 0 && rec.formulaMl > 0;
-  const tn = rec.type === 'milk' ? ('喝奶 ' + (mix ? (rec.breastMl + '+' + rec.formulaMl + 'ml') : ((rec.amountMl || 0) + 'ml'))) : rec.type === 'poop' ? '排便' : '尿尿';
+  const tn = rec.type === 'milk' ? ('喝奶 ' + (mix ? (rec.breastMl + '+' + rec.formulaMl + 'ml') : ((rec.amountMl || 0) + 'ml'))) : rec.type === 'nurse' ? ('親餵 ' + (rec.side === 'right' ? 'R' : 'L') + ' ' + nurseDurLabel(rec.durationSec)) : rec.type === 'brush' ? '刷牙' : rec.type === 'poop' ? '排便' : '尿尿';
   const delText = tn + ' · ' + hm(new Date(rec.time));
   return `<div style="position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);backdrop-filter:blur(4px);z-index:90;display:flex;align-items:center;justify-content:center;" onclick="A.cancelDelete()">
     <div onclick="event.stopPropagation()" style="background:var(--card);border-radius:26px;padding:26px 24px 20px;width:280px;text-align:center;box-shadow:0 24px 80px var(--shadow2);animation:pop .35s cubic-bezier(.17,.67,.32,1.2);">
@@ -1754,6 +1825,7 @@ function renderSheet(state) {
   _lastSheetKey = key;
   if (state.sheet === 'milk') return renderMilkSheet(state, reopen);
   if (state.sheet === 'edit') return renderEditSheet(state, reopen);
+  if (state.sheet === 'nurse') return renderNurseSheet(state, reopen);
   if (state.sheet === 'editRec') return renderEditRecSheet(state, reopen);
   if (state.sheet === 'growth') return renderGrowthSheet(state, reopen);
   if (state.sheet === 'avatar') return renderAvatarSheet(state, reopen);
@@ -1781,7 +1853,7 @@ function championForSettle(settle) {
   const evs = Store.liveEvents().filter(e => { const t = new Date(e.time); return t >= weekStart && t <= weekEnd; });
   if (!evs.length) return null;
   const byMap = {};
-  evs.forEach(e => { const k = e.by || '未命名'; if (!byMap[k]) byMap[k] = { milk: 0, other: 0 }; if (e.type === 'milk') byMap[k].milk++; else byMap[k].other++; });
+  evs.forEach(e => { const k = e.by || '未命名'; if (!byMap[k]) byMap[k] = { milk: 0, other: 0 }; if (e.type === 'milk' || e.type === 'nurse') byMap[k].milk++; else byMap[k].other++; });
   const ranking = Object.keys(byMap).map(name => ({ name, milk: byMap[name].milk, other: byMap[name].other, total: byMap[name].milk + byMap[name].other }))
     .sort((a, b) => b.total - a.total || b.milk - a.milk);
   const top = ranking[0];
@@ -1806,6 +1878,40 @@ function renderCelebration(state) {
     <div class="cele-hint">點任意處關閉</div>
   </div>`;
 }
+// Floating direct-breastfeeding dock (bottom-right, above the 設定 nav item). Its running
+// number is patched directly by App._nurseUpdateDock each tick (see app.js) so it doesn't
+// force a full re-render every 500ms; the values here are just the initial paint. Hidden while
+// the welcome screen is up so it doesn't float over onboarding.
+function renderNurseDock(state) {
+  if (state.showWelcome) return '';
+  const A = AppRef(), s = state.nurse;
+  const col = (side, flip) => {
+    const active = !!(s && s.active === side);
+    const paused = !!(s && s.active !== side && s[side] > 0);
+    const timeTxt = active ? A.nurseFmt(A._nurseElapsed()) : (paused ? A.nurseFmt(s[side]) : '');
+    return `<div class="nb-col${active ? ' active' : paused ? ' paused' : ''}" id="nb-col-${side}">
+      <div class="nb-t" id="nb-t-${side}">${timeTxt}</div>
+      <button class="nb-btn" onpointerdown="A.startNursePress('${side}')" onpointerup="A.endNursePress()" onpointerleave="A.endNursePress()" onclick="A.onNurseTapGuard('${side}')"><span class="nb-emoji${flip ? ' flip' : ''}">🤱</span><span class="nb-lbl">${side === 'left' ? 'L' : 'R'}</span></button>
+    </div>`;
+  };
+  return `<div class="nurse-dock">${col('left', true)}${col('right', false)}</div>`;
+}
+function renderNurseTutorial(state) {
+  if (!state.nurseTutorial) return '';
+  return `<div class="tut-overlay" onclick="if(event.target===this)A.closeNurseTutorial()">
+    <div class="tut-card">
+      <div class="tut-emoji">🤱</div>
+      <div class="tut-title">親餵計時</div>
+      <div class="tut-rows">
+        <div class="tut-row"><span class="tut-ic">👆</span><div><b>點一下</b> L 或 R 開始計時，<b>再點同一顆</b>結束並記錄。</div></div>
+        <div class="tut-row"><span class="tut-ic">🔄</span><div>計時中<b>點另一顆</b>＝換邊（這邊暫停、那邊開始）。誤觸再點回來即可。</div></div>
+        <div class="tut-row"><span class="tut-ic">✋</span><div><b>長按 1 秒</b>＝補記之前忘了記的親餵。</div></div>
+        <div class="tut-row"><span class="tut-ic">⏱</span><div>時間會從 <b>10s</b> 跳到 <b>25m</b>、<b>1h10m</b>；滿 1.5 小時自動停止。</div></div>
+      </div>
+      <button class="tut-ok" onclick="A.closeNurseTutorial()">知道了</button>
+    </div>
+  </div>`;
+}
 function render(state) {
   _timelineMeta = null;
   // Every state change replaces #root's whole innerHTML (see module comment below), which
@@ -1817,11 +1923,13 @@ function render(state) {
   const html = `<div class="app">
     ${screenHtml}
     ${renderNav(state)}
+    ${renderNurseDock(state)}
     ${renderSheet(state)}
     ${renderDeleteConfirm(state)}
     ${renderDeleteGrowthConfirm(state)}
     ${renderRenameConfirm(state)}
     ${renderWelcome(state)}
+    ${renderNurseTutorial(state)}
     ${renderCelebration(state)}
     ${renderToast(state)}
   </div>`;
