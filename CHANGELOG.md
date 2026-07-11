@@ -3,6 +3,15 @@
 版號規則跟 JPL（日語學習 App）主 dev 對話一致：`MAJOR.MINOR.PATCH`——新功能升 MINOR、
 架構級的重大改動升 MAJOR、bug 修正/小改善升 PATCH。版本號顯示在設定頁最下方。
 
+## v2.29.1 — 2026-07-11
+
+**新增 baby：獨立新家庭 friendC（成員 jennifer90131@gmail.com、s95321053@gmail.com）**
+
+- 在 `js/firebase-sync.js` 的白名單與 `firestore.rules` 都加上新家庭 `friendC`
+  （兩位照顧者：jennifer90131@gmail.com、s95321053@gmail.com），資料路徑
+  `families/friendC`，與現有家庭完全隔離。
+- 注意：`firestore.rules` 需在 Firebase 端另外發布才會生效（git push 只會更新前端白名單）。
+
 ## v2.29.0 — 2026-07-09
 
 **新功能：親餵（直接哺乳）計時 🤱**
