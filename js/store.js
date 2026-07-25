@@ -172,13 +172,29 @@ const Store = {
   //      never call _cloudPush here, or every device would re-broadcast every
   //      change it receives right back at Firestore in an infinite loop) ----
   mergeRemote(kind, doc) {
+    if (this._mergeOne(kind, doc)) this.persist();
+  },
+  // Same merge logic as mergeRemote, but for a whole batch of docs from one Firestore
+  // snapshot (e.g. the initial onSnapshot fire, which delivers every existing document
+  // as an "added" change). Merging each doc in-memory and persisting/re-rendering once
+  // at the end — instead of once per doc — avoids O(n) full-data JSON.stringify writes
+  // and full-app re-renders for what's really a single logical update. With enough
+  // history this was the "sign-in/sync feels slow" cause: n docs meant n synchronous
+  // localStorage writes of the *entire* dataset plus n full re-renders in one tick.
+  mergeRemoteBatch(kind, docs) {
+    let changed = false;
+    docs.forEach((doc) => { if (this._mergeOne(kind, doc)) changed = true; });
+    if (changed) this.persist();
+  },
+  _mergeOne(kind, doc) {
     const arr = this.data[kind];
     const i = arr.findIndex((x) => x.id === doc.id);
-    if (i === -1) { arr.push(doc); this.persist(); return; }
+    if (i === -1) { arr.push(doc); return true; }
     if (new Date(doc.updatedAt || 0) >= new Date(arr[i].updatedAt || 0)) {
       arr[i] = doc;
-      this.persist();
+      return true;
     }
+    return false;
   },
   mergeRemoteSettings(settings) {
     if ((settings.updatedAt || '') >= (this.data.settings.updatedAt || '')) {

@@ -149,11 +149,11 @@ const Sync = {
     };
 
     unsubEvents = fbDb.collection(`${familyPath()}/events`).onSnapshot(
-      (snap) => { snap.docChanges().forEach((c) => Store.mergeRemote("events", { id: c.doc.id, ...c.doc.data() })); settled(); },
+      (snap) => { Store.mergeRemoteBatch("events", snap.docChanges().map((c) => ({ id: c.doc.id, ...c.doc.data() }))); settled(); },
       (err) => this._onListenerError(err)
     );
     unsubGrowth = fbDb.collection(`${familyPath()}/growth`).onSnapshot(
-      (snap) => { snap.docChanges().forEach((c) => Store.mergeRemote("growth", { id: c.doc.id, ...c.doc.data() })); settled(); },
+      (snap) => { Store.mergeRemoteBatch("growth", snap.docChanges().map((c) => ({ id: c.doc.id, ...c.doc.data() }))); settled(); },
       (err) => this._onListenerError(err)
     );
     unsubSettings = fbDb.doc(`${familyPath()}/settings/main`).onSnapshot(

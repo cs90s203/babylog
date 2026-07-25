@@ -3,6 +3,20 @@
 版號規則跟 JPL（日語學習 App）主 dev 對話一致：`MAJOR.MINOR.PATCH`——新功能升 MINOR、
 架構級的重大改動升 MAJOR、bug 修正/小改善升 PATCH。版本號顯示在設定頁最下方。
 
+## v2.29.3 — 2026-07-25
+
+**效能修復：登入同步變慢的根因**
+
+- 找到「連線抓取過慢」的根因：Firestore 第一次 `onSnapshot` 會把整個 collection
+  的每一筆都當成一個「新增」事件送來；舊版 `Store.mergeRemote()` 每一筆各自呼叫
+  一次 `persist()`，而 `persist()` 會把**整份資料**重新序列化寫回 localStorage、
+  並觸發一次**全畫面重繪**。資料量越大（累積越久）就越慢，是 O(n) 次全量寫入
+  + 全量重繪，而不是一次。
+- 新增 `Store.mergeRemoteBatch()`，同一批 snapshot 的所有筆記錄先在記憶體合併完，
+  最後只 `persist()` 一次；`js/firebase-sync.js` 的 events/growth 監聽器改用這個。
+- 實測 500 筆事件的初次同步：9.75 秒 → 45.8 毫秒（約快 200 倍），且合併結果
+  （新增、`updatedAt` 較新覆蓋、較舊忽略）與舊邏輯一致，行為不變只是變快。
+
 ## v2.29.2 — 2026-07-22
 
 **統計：奶量直條圖標上總和數字**
