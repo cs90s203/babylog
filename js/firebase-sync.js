@@ -20,23 +20,25 @@ const firebaseConfig = {
 // baby) means adding one entry here AND mirroring the same email list in
 // firestore.rules — that file is the actual security boundary, not this one (this object
 // being visible in the client bundle isn't a leak in itself).
-// CAVEAT: local data (localStorage['bt_data']) is NOT namespaced per family — this assumes
-// each device only ever signs in as one family's members. If a shared/borrowed device ever
-// signed into two different families' accounts, cached local records could get pushed to
-// the wrong family on the next sign-in. Fine for "a couple of families, each on their own
-// devices"; would need per-family local storage keys to be fully safe against that.
+// An email can belong to more than one family (e.g. a grandparent helping with two
+// grandkids) — familyIdsForEmail returns every match, and the signed-in account switches
+// between them via Sync.switchFamily (see renderFamilySwitchButton in views.js). Store.js's
+// bindFamily() keeps each family's local cache in its own storage key so switching never
+// mixes two babies' data on one device — that used to be a hard assumption (single family
+// per device); it no longer is.
 const FAMILIES = {
   default: ["cs90s203@gmail.com", "snowy5420@gmail.com", "lunamamahappy@gmail.com"],
   friendA: ["phoebe790322@gmail.com", "jumptoohigh@gmail.com"],
   friendB: ["sanan282000@gmail.com"],
   friendC: ["jennifer90131@gmail.com", "s95321053@gmail.com"],
 };
-function familyIdForEmail(email) {
-  for (const id in FAMILIES) if (FAMILIES[id].includes(email)) return id;
-  return null;
+function familyIdsForEmail(email) {
+  const ids = [];
+  for (const id in FAMILIES) if (FAMILIES[id].includes(email)) ids.push(id);
+  return ids;
 }
 
-let currentFamilyId = null; // set once signed in, see familyIdForEmail()
+let currentFamilyId = null; // set once signed in, see familyIdsForEmail()
 function familyPath() { return `families/${currentFamilyId}`; }
 
 let fbApp = null, fbAuth = null, fbDb = null;
@@ -48,6 +50,9 @@ const Sync = {
   state: "idle", // idle | signing-in | syncing | done | fail | unauthorized
   message: "",
   user: null, // {email, displayName, photoURL} once signed in
+  familyId: null, // mirrors currentFamilyId, so views.js/app.js don't need module-internal access
+  availableFamilyIds: [], // every family this signed-in email belongs to (usually just one)
+  _familyLabelCache: {}, // familyId -> {babyName, babyEmoji}, filled on demand by fetchFamilyLabel
   listeners: [],
   onChange(fn) { this.listeners.push(fn); },
   _set(state, message) { this.state = state; this.message = message || ""; this.listeners.forEach((fn) => fn()); },
@@ -68,23 +73,33 @@ const Sync = {
 
       fbAuth.onAuthStateChanged((user) => {
         authStateKnown = true;
-        const famId = user ? familyIdForEmail(user.email) : null;
-        if (user && !famId) {
+        const famIds = user ? familyIdsForEmail(user.email) : [];
+        if (user && famIds.length === 0) {
           this._set("unauthorized", "此 Google 帳號未被授權使用");
           fbAuth.signOut();
           this.user = null;
-          currentFamilyId = null;
+          currentFamilyId = null; this.familyId = null; this.availableFamilyIds = [];
+          Store.bindFamily(null);
           this._detachListeners();
           return;
         }
-        currentFamilyId = famId;
+        this.availableFamilyIds = famIds;
         this.user = user ? { email: user.email, displayName: user.displayName, photoURL: user.photoURL } : null;
         if (user) {
+          // Prefer whichever family this device last used (persisted by Store.bindFamily),
+          // as long as this account still belongs to it — otherwise fall back to the first
+          // match. For an account that has only ever belonged to one family, famIds[0] IS
+          // that family, so this is a no-op for the common case.
+          const pref = Store.local("family_id");
+          currentFamilyId = (pref && famIds.includes(pref)) ? pref : famIds[0];
+          this.familyId = currentFamilyId;
+          Store.bindFamily(currentFamilyId);
           this._pushAllLocal();
           this._attachListeners();
           this._set("syncing");
         } else {
-          currentFamilyId = null;
+          currentFamilyId = null; this.familyId = null; this.availableFamilyIds = [];
+          Store.bindFamily(null);
           this._detachListeners();
           this._set("idle");
         }
@@ -93,6 +108,39 @@ const Sync = {
       firebaseInitError = e.message;
       this._set("fail", "Firebase 初始化失敗：" + e.message);
     }
+  },
+
+  // Move the signed-in account from its current family to another one it also belongs to
+  // (see renderFamilySwitchButton/renderFamilySwitcher in views.js). No-op for an id the
+  // account doesn't have access to, or the family it's already on.
+  switchFamily(id) {
+    if (!this.availableFamilyIds.includes(id) || id === currentFamilyId) return;
+    this._detachListeners();
+    currentFamilyId = id;
+    this.familyId = id;
+    Store.bindFamily(id);
+    this._pushAllLocal();
+    this._attachListeners();
+    this._set("syncing");
+  },
+
+  // Display label for a family in the switcher UI — reads that family's own settings/main
+  // doc (allowed since the signed-in email is a member of every id in availableFamilyIds),
+  // cached in-memory so re-opening the switcher doesn't re-fetch. Currently-active family's
+  // label comes straight from the already-loaded Store.data, no network round-trip needed.
+  fetchFamilyLabel(id) {
+    if (this._familyLabelCache[id]) return Promise.resolve(this._familyLabelCache[id]);
+    if (id === currentFamilyId) {
+      const label = { babyName: Store.data.settings.babyName || "", babyEmoji: Store.data.settings.babyEmoji || "👶" };
+      this._familyLabelCache[id] = label;
+      return Promise.resolve(label);
+    }
+    return fbDb.doc(`families/${id}/settings/main`).get().then((doc) => {
+      const d = doc.exists ? doc.data() : {};
+      const label = { babyName: d.babyName || "", babyEmoji: d.babyEmoji || "👶" };
+      this._familyLabelCache[id] = label;
+      return label;
+    }).catch(() => ({ babyName: "", babyEmoji: "👶" }));
   },
 
   signInWithGoogle() {
@@ -127,7 +175,11 @@ const Sync = {
     let n = 0;
     Store.data.events.forEach((ev) => { batch.set(fbDb.doc(`${familyPath()}/events/${ev.id}`), ev, { merge: true }); n++; });
     Store.data.growth.forEach((g) => { batch.set(fbDb.doc(`${familyPath()}/growth/${g.id}`), g, { merge: true }); n++; });
-    if (Store.data.settings) { batch.set(fbDb.doc(`${familyPath()}/settings/main`), Store.data.settings, { merge: true }); n++; }
+    // Only push settings that have actually been touched (updatedAt set) — otherwise
+    // switching to a family this device hasn't synced down yet would push the untouched
+    // defaultData() scaffolding (blank babyName etc.) and clobber that family's real
+    // settings before the listener below even gets a chance to pull them down.
+    if (Store.data.settings && Store.data.settings.updatedAt) { batch.set(fbDb.doc(`${familyPath()}/settings/main`), Store.data.settings, { merge: true }); n++; }
     if (n === 0) return;
     batch.commit().catch((err) => console.error("initial catch-up push failed:", err));
   },

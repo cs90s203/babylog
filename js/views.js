@@ -1422,6 +1422,38 @@ function renderAuthCard() {
     </button>
     <p style="font-size:11px;color:var(--text3);text-align:center;margin-top:10px;line-height:1.5;">登入後資料即時同步到所有裝置，僅限授權過的家庭成員帳號。</p>`;
 }
+// Only functional once this signed-in account belongs to more than one family (see
+// Sync.availableFamilyIds in firebase-sync.js) — otherwise rendered disabled, per how a
+// single-baby account has nothing to switch to.
+function renderFamilySwitchButton() {
+  const multi = Sync.isSignedIn() && Sync.availableFamilyIds && Sync.availableFamilyIds.length > 1;
+  if (!multi) return `<button disabled style="width:100%;margin-top:12px;background:transparent;border:1.5px solid var(--line);border-radius:14px;padding:12px;font-size:13px;font-weight:700;color:var(--text3);">🔀 切換寶寶（僅單一寶寶帳號無法使用）</button>`;
+  return `<button onclick="A.openFamilySwitcher()" style="width:100%;margin-top:12px;background:var(--card2);border:1.5px solid var(--inpBorder);border-radius:14px;padding:12px;font-size:13px;font-weight:700;color:var(--text);">🔀 切換寶寶</button>`;
+}
+function renderFamilySwitcher(state) {
+  if (!state.familySwitcherOpen) return '';
+  const ids = Sync.availableFamilyIds || [];
+  const labels = state.familySwitcherLabels || {};
+  const rows = ids.map((id) => {
+    const lbl = labels[id];
+    const name = lbl ? (lbl.babyName || '未命名寶寶') : '載入中…';
+    const emoji = (lbl && lbl.babyEmoji) || '👶';
+    const active = id === Sync.familyId;
+    return `<button ${active ? 'disabled' : `onclick="A.switchFamily('${id}')"`} style="width:100%;display:flex;align-items:center;gap:12px;padding:14px;border-radius:16px;border:1.5px solid ${active ? 'var(--accent)' : 'var(--inpBorder)'};background:${active ? 'var(--card2)' : 'transparent'};margin-bottom:10px;text-align:left;">
+      <span style="font-size:26px;">${emoji}</span>
+      <span style="flex:1;font-size:15px;font-weight:700;color:var(--text);">${esc(name)}</span>
+      ${active ? '<span style="font-size:12px;color:var(--accent);font-weight:700;">目前</span>' : ''}
+    </button>`;
+  }).join('');
+  return `<div style="position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);backdrop-filter:blur(4px);z-index:90;display:flex;align-items:center;justify-content:center;" onclick="A.closeFamilySwitcher()">
+    <div onclick="event.stopPropagation()" style="background:var(--card);border-radius:26px;padding:24px 20px 20px;width:300px;box-shadow:0 24px 80px var(--shadow2);animation:pop .35s cubic-bezier(.17,.67,.32,1.2);">
+      <p style="font-size:17px;font-weight:800;margin-bottom:4px;color:var(--text);text-align:center;">切換寶寶</p>
+      <p style="font-size:12px;color:var(--text2);margin-bottom:16px;text-align:center;line-height:1.5;">這個帳號同時屬於多個寶寶的家庭</p>
+      ${rows}
+      <button onclick="A.closeFamilySwitcher()" style="width:100%;background:var(--card2);border:none;border-radius:14px;padding:12px;font-size:14px;font-weight:700;color:var(--text2);margin-top:2px;">關閉</button>
+    </div>
+  </div>`;
+}
 function renderSettings(state) {
   const s = Store.data.settings;
   const sexBtn = (val, label) => `<button onclick="A.setBabySex('${val}')" style="flex:1;padding:9px;border-radius:10px;border:none;font-size:13px;font-weight:${s.babySex === val ? 700 : 600};cursor:pointer;background:${s.babySex === val ? 'var(--card)' : 'transparent'};color:${s.babySex === val ? 'var(--text)' : 'var(--text2)'};box-shadow:${s.babySex === val ? '0 1px 5px var(--shadow)' : 'none'};">${label}</button>`;
@@ -1444,6 +1476,7 @@ function renderSettings(state) {
         <p style="font-size:11px;color:var(--text2);font-weight:600;margin-bottom:6px;">性別（用於成長百分位）</p>
         <div style="display:flex;background:var(--card2);border-radius:14px;padding:4px;">${sexBtn('boy', '👦 男生')}${sexBtn('girl', '👧 女生')}</div>
         <p style="font-size:10.5px;color:var(--text3);margin-top:10px;line-height:1.5;">寶寶資料屬於所有照顧者共用（會隨同步在各裝置一致）；下方「我是…」才是這支手機自己的身分。</p>
+        ${renderFamilySwitchButton()}
       </div>
     </div>
     <div style="padding:18px 16px 0;">
@@ -1936,6 +1969,7 @@ function render(state) {
     ${renderDeleteGrowthConfirm(state)}
     ${renderRenameConfirm(state)}
     ${renderWelcome(state)}
+    ${renderFamilySwitcher(state)}
     ${renderNurseTutorial(state)}
     ${renderCelebration(state)}
     ${renderToast(state)}

@@ -1,6 +1,9 @@
 // Central state + persistence layer.
 // Sync boundary (see docs/data-model.md):
 //   bt_data        -> synced via Firestore (events, growth, settings) — shared by all devices
+//                     of ONE family; once an account belongs to more than one family (see
+//                     bindFamily below), each family gets its own bt_data::{familyId} key so
+//                     switching babies on one device never mixes their data.
 //   bt_caregiver   -> THIS DEVICE ONLY, marks `by` on new records, never synced
 //   everything else prefixed bt_local_ -> device-only preferences
 //
@@ -14,6 +17,8 @@
 const DATA_KEY = 'bt_data';
 const CAREGIVER_KEY = 'bt_caregiver';
 const LOCAL_PREFIX = 'bt_local_';
+const LEGACY_MIGRATED_KEY = LOCAL_PREFIX + 'legacy_migrated';
+const FAMILY_ID_KEY = LOCAL_PREFIX + 'family_id';
 
 function uid() {
   if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
@@ -47,22 +52,62 @@ const Store = {
   listeners: [],
   _cloudPush: null, // set by firebase-sync.js: function(kind, doc)
   _cloudPushSettings: null, // function(settings)
+  _familyId: null, // null = not signed in / single-family account, else which family's data is loaded
 
   init() {
-    try { this.data = JSON.parse(localStorage.getItem(DATA_KEY)) || defaultData(); }
-    catch (e) { this.data = defaultData(); }
+    try { this._familyId = localStorage.getItem(FAMILY_ID_KEY) || null; } catch (e) { this._familyId = null; }
+    this._loadFromDisk();
+    try { this.caregiver = localStorage.getItem(CAREGIVER_KEY) || ''; } catch (e) { this.caregiver = ''; }
+  },
+
+  // Key this device's local cache is read from / written to. Staying on the single global
+  // DATA_KEY when no family is known yet (or the account belongs to only one family) matches
+  // the app's original behavior exactly — the per-family split only kicks in once bindFamily
+  // has actually been called with a real family id (see below).
+  _dataKey() { return this._familyId ? `${DATA_KEY}::${this._familyId}` : DATA_KEY; },
+  _loadFromDisk() {
+    let raw = null;
+    try { raw = localStorage.getItem(this._dataKey()); } catch (e) {}
+    if (!raw && this._familyId) {
+      // No cache yet for this family on this device. If this is the very first family this
+      // device has ever bound to, adopt the pre-existing global bt_data blob instead of
+      // starting empty — that's what makes this change a no-op for every existing
+      // single-family install (their history just gets renamed into a scoped key the first
+      // time they sign in post-update). Any OTHER family this account later switches to
+      // starts genuinely empty and re-syncs down from Firestore, same as a brand-new device
+      // signing into an established family always has.
+      let migrated = false;
+      try { migrated = localStorage.getItem(LEGACY_MIGRATED_KEY) === '1'; } catch (e) {}
+      if (!migrated) {
+        try { raw = localStorage.getItem(DATA_KEY); } catch (e) {}
+        try { localStorage.setItem(LEGACY_MIGRATED_KEY, '1'); } catch (e) {}
+      }
+    }
+    try { this.data = raw ? JSON.parse(raw) : defaultData(); } catch (e) { this.data = defaultData(); }
     // backfill any settings keys added after a user's first install
     this.data.settings = Object.assign(defaultData().settings, this.data.settings || {});
     this.data.events = this.data.events || [];
     this.data.growth = this.data.growth || [];
-    try { this.caregiver = localStorage.getItem(CAREGIVER_KEY) || ''; } catch (e) { this.caregiver = ''; }
+  },
+  // Called by Sync once it knows which family (if any) the signed-in account is using —
+  // re-points Store.data at that family's own local cache so switching between two babies on
+  // one device never mixes their data. A no-op if already bound to this family.
+  bindFamily(familyId) {
+    if (this._familyId === familyId) return;
+    this._familyId = familyId;
+    try {
+      if (familyId) localStorage.setItem(FAMILY_ID_KEY, familyId);
+      else localStorage.removeItem(FAMILY_ID_KEY);
+    } catch (e) {}
+    this._loadFromDisk();
+    this.persist();
   },
 
   onChange(fn) { this.listeners.push(fn); },
   _emit() { this.listeners.forEach(fn => fn()); },
 
   persist() {
-    try { localStorage.setItem(DATA_KEY, JSON.stringify(this.data)); } catch (e) {}
+    try { localStorage.setItem(this._dataKey(), JSON.stringify(this.data)); } catch (e) {}
     this._emit();
   },
 

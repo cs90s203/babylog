@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.29.4';
+const APP_VERSION = '2.30.0';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -57,6 +57,8 @@ const App = {
     confirmDelGrowthId: null,
     exportFrom: todayStr(new Date(Date.now() - 7 * 86400000)),
     exportTo: todayStr(),
+    familySwitcherOpen: false, // "切換寶寶" modal in 設定, see renderFamilySwitcher
+    familySwitcherLabels: {}, // familyId -> {babyName, babyEmoji}, filled in as fetchFamilyLabel resolves
   },
   _toastTimer: null,
   _pressTimer: null,
@@ -901,6 +903,25 @@ const App = {
   },
   signIn() { Sync.signInWithGoogle(); },
   signOut() { Sync.signOut(); },
+
+  // "切換寶寶" — only meaningful once an account belongs to more than one family (see
+  // renderFamilySwitchButton in views.js, which keeps the button disabled otherwise).
+  // Labels load on demand per family (a settings/main read) rather than all at once so
+  // opening the switcher doesn't pay for families most accounts never have.
+  openFamilySwitcher() {
+    this.set({ familySwitcherOpen: true, familySwitcherLabels: {} });
+    (Sync.availableFamilyIds || []).forEach((id) => {
+      Sync.fetchFamilyLabel(id).then((label) => {
+        this.state.familySwitcherLabels = Object.assign({}, this.state.familySwitcherLabels, { [id]: label });
+        this.rerender();
+      });
+    });
+  },
+  closeFamilySwitcher() { this.set({ familySwitcherOpen: false }); },
+  switchFamily(id) {
+    Sync.switchFamily(id);
+    this.set({ familySwitcherOpen: false });
+  },
 };
 
 window.A = App;
