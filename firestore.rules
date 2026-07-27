@@ -13,7 +13,9 @@ service cloud.firestore {
       return request.auth != null &&
         request.auth.token.email in [
           'phoebe790322@gmail.com',
-          'jumptoohigh@gmail.com'
+          'jumptoohigh@gmail.com',
+          'lunamamahappy@gmail.com',
+          'cs90s203@gmail.com'
         ];
     }
     function isFriendBFamily() {

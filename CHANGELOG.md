@@ -3,6 +3,20 @@
 版號規則跟 JPL（日語學習 App）主 dev 對話一致：`MAJOR.MINOR.PATCH`——新功能升 MINOR、
 架構級的重大改動升 MAJOR、bug 修正/小改善升 PATCH。版本號顯示在設定頁最下方。
 
+## v2.30.1 — 2026-07-27
+
+**啟用切換寶寶：lunamamahappy、cs90s203 加入 friendA（測試用）**
+
+- `js/firebase-sync.js` 的 `FAMILIES.friendA` 與 `firestore.rules` 的
+  `isFriendAFamily()` 都加上 `lunamamahappy@gmail.com`、`cs90s203@gmail.com`，
+  讓這兩個帳號同時屬於 `default` 與 `friendA` 兩個家庭，可以用「🔀 切換寶寶」在
+  兩邊之間切換（cs90s203 是為了測試用）。
+- `FAMILIES` 裡 `default` 排在 `friendA` 前面，且這兩個帳號本來就在 `default`
+  名單——確認過還沒更新到新版 JS 的裝置，比對邏輯仍會先命中 `default`、行為完全
+  不變；`firestore.rules` 的改動也只是新增權限，不動 `isDefaultFamily()`。
+- 提醒：`firestore.rules` 需要在 Firebase Console 另外貼上發布才會生效，
+  git push 只更新前端白名單。
+
 ## v2.30.0 — 2026-07-27
 
 **新功能（beta，尚未對任何帳號啟用）：一個帳號切換多個寶寶**
