@@ -878,8 +878,13 @@ function renderFeedStats(state) {
   const summaryRow2 = `<div style="display:flex;margin-top:14px;padding-top:14px;border-top:1px solid var(--line);">${sStat(avgIntervalLabel, '平均間隔(不含夜間)')}${div}${sStat(avgPoop, '平均排便/日')}${div}${sStat(avgPee, '平均尿尿/日')}</div>`;
   const summary = `<div class="card" style="padding:16px 4px;margin-bottom:14px;">${summaryRow1}${summaryRow2}</div>`;
 
+  // 尿布 count is the number of diaper CHANGES (poop+pee logged at the same timestamp
+  // count as one), not the raw sum of poop and pee events — otherwise one change logged
+  // as both doubles up. Other event types (nurse, brush) don't belong in this "diaper"
+  // tally at all.
   const byMap = {};
-  evs.forEach(e => { const k = e.by || '未命名'; if (!byMap[k]) byMap[k] = { milk: 0, diaper: 0 }; if (e.type === 'milk') byMap[k].milk++; else byMap[k].diaper++; });
+  evs.filter(e => e.type === 'milk').forEach(e => { const k = e.by || '未命名'; if (!byMap[k]) byMap[k] = { milk: 0, diaper: 0 }; byMap[k].milk++; });
+  dedupeDiaperChanges(evs).forEach(c => { const k = c.by || '未命名'; if (!byMap[k]) byMap[k] = { milk: 0, diaper: 0 }; byMap[k].diaper++; });
   const ranking = Object.keys(byMap).map(name => ({ name, milk: byMap[name].milk, diaper: byMap[name].diaper, total: byMap[name].milk + byMap[name].diaper })).sort((a, b) => b.total - a.total);
   const rkMax = ranking.length ? Math.max(...ranking.map(r => r.total)) : 1;
   const cgRows = ranking.map((r, i) => `<div style="margin-bottom:${i === ranking.length - 1 ? 0 : 13}px;">
@@ -1003,6 +1008,8 @@ function bucketizeMl(range, evs) {
 }
 // One diaper change = every poop/pee event sharing the exact same timestamp (strict —
 // even a 1-minute gap is a separate change, per how this family actually uses diapers).
+// `by` is kept from the first event in the group (poop+pee logged together are always the
+// same person's action) so callers can attribute one change to one caregiver.
 function dedupeDiaperChanges(evs) {
   const diaper = evs.filter(e => e.type === 'poop' || e.type === 'pee').slice().sort((a, b) => new Date(a.time) - new Date(b.time));
   const changes = [];
@@ -1010,7 +1017,7 @@ function dedupeDiaperChanges(evs) {
     const t = new Date(e.time).getTime();
     const last = changes[changes.length - 1];
     if (last && last.time === t) { if (e.type === 'poop') last.poop++; else last.pee++; }
-    else changes.push({ time: t, poop: e.type === 'poop' ? 1 : 0, pee: e.type === 'pee' ? 1 : 0 });
+    else changes.push({ time: t, poop: e.type === 'poop' ? 1 : 0, pee: e.type === 'pee' ? 1 : 0, by: e.by });
   });
   return changes;
 }
