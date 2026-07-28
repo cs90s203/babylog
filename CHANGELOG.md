@@ -3,6 +3,26 @@
 版號規則跟 JPL（日語學習 App）主 dev 對話一致：`MAJOR.MINOR.PATCH`——新功能升 MINOR、
 架構級的重大改動升 MAJOR、bug 修正/小改善升 PATCH。版本號顯示在設定頁最下方。
 
+## v2.30.2 — 2026-07-27
+
+**效能修復：開啟 App / 切換頁面卡頓、畫面跳兩三次才穩定**
+
+- 根因：`Store.onChange` 跟 `Sync.onChange` 各自直接觸發一次全畫面重繪（整個
+  `#root` innerHTML 重建）。登入同步時，光是「綁定家庭」「syncing 狀態」「events／
+  growth／settings 三個 Firestore 監聽各自到達初次快照」「done 狀態」就會在不到
+  1 秒內連續觸發約 5-7 次全畫面重繪——這就是「打開 App 會跳兩三次頁面才正常」
+  「當日進度常常只顯示一半」的原因：使用者看到的是中間幾個資料還沒同步齊的
+  過渡畫面，而不是最終結果；密集重繪也會讓剛點下去的按鈕在畫面重建瞬間「失焦」，
+  造成切換頁面時卡頓約 1 秒才能點擊。單次重繪本身並不慢（實測 2700 筆事件約
+  10ms），問題是短時間內疊了好幾次。
+- 修法：`App.rerender()` 改成用 `requestAnimationFrame` 合併同一畫面更新週期內的
+  多次觸發，只在下一影格重繪一次；同一段登入同步 burst 現在只會觸發 **1 次**
+  重繪（實測驗證）。新增 `App.rerenderNow()` 給少數需要重繪後立刻讀取 DOM 的地方
+  （週冠軍煙火 `openCelebration`）維持原本同步行為，避免煙火節點找不到。
+- 加了一個保險：App 被切到背景時 `requestAnimationFrame` 不會觸發，若剛好有一次
+  重繪卡在排隊中，切回前景時用 `visibilitychange` 強制補畫一次，避免極端情況下
+  畫面卡住不動。
+
 ## v2.30.1 — 2026-07-27
 
 **啟用切換寶寶：lunamamahappy、cs90s203 加入 friendA（測試用）**

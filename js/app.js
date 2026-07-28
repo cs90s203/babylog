@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.30.1';
+const APP_VERSION = '2.30.2';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -89,6 +89,13 @@ const App = {
       const handler = () => { if (this.state.theme === 'auto') this.rerender(); };
       if (mq.addEventListener) mq.addEventListener('change', handler);
     }
+    // Safety net for rerender()'s requestAnimationFrame batching: a backgrounded tab never
+    // fires rAF, so a render queued right before the app is backgrounded (e.g. switching
+    // away mid-sync) would otherwise sit pending until something else happens to trigger
+    // another rerender() call. Flush it as soon as the tab is visible again.
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && this._renderQueued) this.rerenderNow();
+    });
     this.rerender();
     // Weekly champion celebration: check right away against locally-cached data (covers the
     // common case where this device already has the week's records), then again the first time
@@ -103,7 +110,25 @@ const App = {
     Sync.init();
   },
 
-  rerender() { render(this.state); },
+  // Coalesces bursts of back-to-back triggers (worst case: cold sign-in fires Store's
+  // family-bind persist, Sync's "syncing" state, then the events/growth/settings
+  // Firestore listeners each landing their initial snapshot within milliseconds of each
+  // other — up to ~7 full-DOM rebuilds in under a second, pre-batching) into a single
+  // render on the next frame. Each individual render() call was never the slow part
+  // (~10ms even with a couple thousand events); it was doing that full innerHTML rebuild
+  // repeatedly in a tight burst that showed up as the app "jumping" through 2-3 half-synced
+  // states on open and briefly eating taps while nodes kept getting replaced out from
+  // under them.
+  _renderQueued: false,
+  rerender() {
+    if (this._renderQueued) return;
+    this._renderQueued = true;
+    const raf = window.requestAnimationFrame || ((fn) => setTimeout(fn, 16));
+    raf(() => { this._renderQueued = false; render(this.state); });
+  },
+  // Bypasses the batching above for the one caller (openCelebration) that touches the DOM
+  // on the very next line and needs it already rebuilt — see startFireworks.
+  rerenderNow() { this._renderQueued = false; render(this.state); },
   set(patch) { Object.assign(this.state, patch); this.rerender(); },
 
   hm(frac) {
@@ -491,8 +516,9 @@ const App = {
   },
   openCelebration(data) {
     if (!data) return;
-    this.set({ celebration: data });
-    this.startFireworks(); // after set() — the #fw node now exists in the fresh DOM
+    Object.assign(this.state, { celebration: data });
+    this.rerenderNow(); // synchronous, not the batched rerender() — #fw must exist before startFireworks() below
+    this.startFireworks();
   },
   closeCelebration() {
     this.stopFireworks();
