@@ -1473,6 +1473,7 @@ function diagnosticsText() {
   lines.push('activeDataKey: ' + Store._dataKey());
   lines.push('pushFailures: ' + Sync.pushFailures + (Sync.lastPushError ? ' / ' + Sync.lastPushError : ''));
   lines.push('fromCacheOnly: ' + Sync.fromCacheOnly + (Sync.fromCacheOnly ? '  ← 沒連上伺服器！' : ''));
+  if (Sync.lastRejectedEmail) lines.push('被拒絕的帳號: ' + Sync.lastRejectedEmail + '  ← 不在白名單');
   lines.push('');
   lines.push('--- 目前載入的資料 ---');
   lines.push('events(全部): ' + Store.data.events.length + ' / 未刪除: ' + Store.liveEvents().length);

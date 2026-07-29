@@ -1,9 +1,16 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Email addresses aren't case-sensitive, but `in [...]` is an exact string match — so
+    // lower() the token before comparing, and keep every address below lowercase. Without
+    // this, a token carrying different casing than the list is rejected as a stranger; the
+    // client does the same normalization (normEmail in js/firebase-sync.js).
+    function authEmail() {
+      return request.auth != null ? request.auth.token.email.lower() : '';
+    }
     function isDefaultFamily() {
       return request.auth != null &&
-        request.auth.token.email in [
+        authEmail() in [
           'cs90s203@gmail.com',
           'snowy5420@gmail.com',
           'lunamamahappy@gmail.com'
@@ -11,7 +18,7 @@ service cloud.firestore {
     }
     function isFriendAFamily() {
       return request.auth != null &&
-        request.auth.token.email in [
+        authEmail() in [
           'phoebe790322@gmail.com',
           'jumptoohigh@gmail.com',
           'lunamamahappy@gmail.com',
@@ -20,13 +27,13 @@ service cloud.firestore {
     }
     function isFriendBFamily() {
       return request.auth != null &&
-        request.auth.token.email in [
+        authEmail() in [
           'sanan282000@gmail.com'
         ];
     }
     function isFriendCFamily() {
       return request.auth != null &&
-        request.auth.token.email in [
+        authEmail() in [
           'jennifer90131@gmail.com',
           's95321053@gmail.com'
         ];

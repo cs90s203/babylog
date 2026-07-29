@@ -32,9 +32,17 @@ const FAMILIES = {
   friendB: ["sanan282000@gmail.com"],
   friendC: ["jennifer90131@gmail.com", "s95321053@gmail.com"],
 };
+// Case-insensitive + trimmed on purpose: email addresses are not case-sensitive, but an
+// exact-match lookup here treats "Snowy5420@gmail.com" and "snowy5420@gmail.com" as
+// different people — and a miss doesn't just hide a family, it lands in the "unauthorized"
+// branch below which force-signs-the-user-out, i.e. it looks exactly like "I can't log in".
+// firestore.rules does its own exact match server-side, so it lists lowercase addresses and
+// this must normalize to the same form.
+function normEmail(e) { return String(e || "").trim().toLowerCase(); }
 function familyIdsForEmail(email) {
+  const target = normEmail(email);
   const ids = [];
-  for (const id in FAMILIES) if (FAMILIES[id].includes(email)) ids.push(id);
+  for (const id in FAMILIES) if (FAMILIES[id].some((e) => normEmail(e) === target)) ids.push(id);
   return ids;
 }
 
@@ -52,6 +60,7 @@ const Sync = {
   user: null, // {email, displayName, photoURL} once signed in
   familyId: null, // mirrors currentFamilyId, so views.js/app.js don't need module-internal access
   availableFamilyIds: [], // every family this signed-in email belongs to (usually just one)
+  lastRejectedEmail: "", // set when a sign-in is refused as unauthorized, so 診斷資訊 can show which address
   _familyLabelCache: {}, // familyId -> {babyName, babyEmoji}, filled on demand by fetchFamilyLabel
   listeners: [],
   onChange(fn) { this.listeners.push(fn); },
@@ -75,7 +84,11 @@ const Sync = {
         authStateKnown = true;
         const famIds = user ? familyIdsForEmail(user.email) : [];
         if (user && famIds.length === 0) {
-          this._set("unauthorized", "此 Google 帳號未被授權使用");
+          // Name the address that was rejected — "未被授權" with no detail is
+          // indistinguishable from a broken login, and the actual string is what reveals a
+          // typo/wrong-account/casing problem at a glance.
+          this._set("unauthorized", `此 Google 帳號未被授權使用：${user.email}`);
+          this.lastRejectedEmail = user.email || "";
           fbAuth.signOut();
           this.user = null;
           currentFamilyId = null; this.familyId = null; this.availableFamilyIds = [];
