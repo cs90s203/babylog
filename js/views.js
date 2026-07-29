@@ -446,18 +446,18 @@ function renderTodayTimeline(state) {
   // Predicted-next-feed line — always visible (unlike the accuracyById overlay above,
   // which stays gated behind long-press), so a caregiver glancing at the timeline gets the
   // same "when's the next feed" info the home card already shows, without leaving the
-  // screen. Skipped when the prediction lands outside the visible window (rare — only
-  // happens with unusually long feed intervals) or would visually collide with the NOW
-  // line/label (e.g. "overdue" predictions sitting at or before now).
+  // screen. Skipped only when the prediction lands outside the visible window (rare — only
+  // happens with unusually long feed intervals). When it lands close to/on the NOW line
+  // (e.g. an overdue prediction), both still draw: NOW keeps the higher z-index so it wins
+  // the line itself, and the predicted label sits on the RIGHT edge (NOW's stays on the
+  // left) so the two texts never overlap even at the same height.
   const pred = AppRef().predict();
   if (pred.status === 'ok') {
     const predPos = posOf(pred.nextTime);
     if (predPos <= endH + 1e-9) {
       const py = yOfAdjusted(predPos);
-      if (Math.abs(py - ny) >= 16) {
-        nodes += `<div style="position:absolute;left:${axisX - 4}px;right:0;top:${py}px;height:0.8px;background:#79C3F0;z-index:2;"></div>
-          <div style="position:absolute;left:0;top:${py + 3}px;font-size:9px;font-weight:800;color:#79C3F0;background:var(--card2);padding:1px 6px;border-radius:6px;z-index:2;">預計 ${hm(pred.nextTime)}</div>`;
-      }
+      nodes += `<div style="position:absolute;left:${axisX - 4}px;right:0;top:${py}px;height:0.8px;background:#79C3F0;z-index:2;"></div>
+        <div style="position:absolute;right:0;top:${py + 3}px;font-size:9px;font-weight:800;color:#79C3F0;background:var(--card2);padding:1px 6px;border-radius:6px;z-index:2;">預計 ${hm(pred.nextTime)}</div>`;
     }
   }
 
