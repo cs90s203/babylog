@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.33.1';
+const APP_VERSION = '2.33.2';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -57,6 +57,7 @@ const App = {
     confirmDelGrowthId: null,
     exportFrom: todayStr(new Date(Date.now() - 7 * 86400000)),
     exportTo: todayStr(),
+    showDiagnostics: false, // 設定 → 診斷資訊 panel, see diagnosticsText()
     familySwitcherOpen: false, // "切換寶寶" modal in 設定, see renderFamilySwitcher
     familySwitcherLabels: {}, // familyId -> {babyName, babyEmoji}, filled in as fetchFamilyLabel resolves
   },
@@ -957,6 +958,7 @@ const App = {
   // Device-local (not synced — see js/store.js's local()), so each caregiver can pin
   // openNextFeedReminder() to their own calendar without affecting anyone else's device.
   setGcalId(v) { Store.local('gcal_id', v.trim()); this.rerender(); },
+  toggleDiagnostics() { this.set({ showDiagnostics: !this.state.showDiagnostics }); },
   doExport() {
     downloadCsv(this.state.exportFrom, this.state.exportTo);
     this.toast('📅', 'CSV 已下載');

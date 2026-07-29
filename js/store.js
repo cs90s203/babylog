@@ -18,6 +18,7 @@ const DATA_KEY = 'bt_data';
 const CAREGIVER_KEY = 'bt_caregiver';
 const LOCAL_PREFIX = 'bt_local_';
 const FAMILY_ID_KEY = LOCAL_PREFIX + 'family_id';
+const LEGACY_OWNER_KEY = LOCAL_PREFIX + 'legacy_owner'; // which family the pre-multi-family bt_data belongs to
 
 function uid() {
   if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
@@ -88,15 +89,27 @@ const Store = {
   // flag that can fall out of sync with reality, and self-healing any device already stuck
   // in that broken state, and (2) only deleting the legacy copy once the new copy is
   // confirmed persisted (see bindFamily below), never before.
+  // The legacy blob predates multi-family and therefore belongs to exactly ONE family: the
+  // first one this device ever bound to. Adopting it for any other family would copy one
+  // baby's history into a different baby's storage — so record the owner on first adoption
+  // and refuse to hand it to anyone else afterwards.
   _pendingLegacyMigration: false,
   _loadFromDisk() {
     let raw = null;
     try { raw = localStorage.getItem(this._dataKey()); } catch (e) {}
     this._pendingLegacyMigration = false;
     if (this._familyId && isEmptyDataBlob(raw)) {
-      let legacyRaw = null;
-      try { legacyRaw = localStorage.getItem(DATA_KEY); } catch (e) {}
-      if (!isEmptyDataBlob(legacyRaw)) { raw = legacyRaw; this._pendingLegacyMigration = true; }
+      let owner = null;
+      try { owner = localStorage.getItem(LEGACY_OWNER_KEY); } catch (e) {}
+      if (!owner || owner === this._familyId) {
+        let legacyRaw = null;
+        try { legacyRaw = localStorage.getItem(DATA_KEY); } catch (e) {}
+        if (!isEmptyDataBlob(legacyRaw)) {
+          raw = legacyRaw;
+          this._pendingLegacyMigration = true;
+          if (!owner) { try { localStorage.setItem(LEGACY_OWNER_KEY, this._familyId); } catch (e) {} }
+        }
+      }
     }
     try { this.data = raw ? JSON.parse(raw) : defaultData(); } catch (e) { this.data = defaultData(); }
     // backfill any settings keys added after a user's first install

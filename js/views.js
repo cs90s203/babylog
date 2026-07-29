@@ -1443,6 +1443,47 @@ function renderAuthCard() {
 // Only functional once this signed-in account belongs to more than one family (see
 // Sync.availableFamilyIds in firebase-sync.js) — otherwise rendered disabled, per how a
 // single-baby account has nothing to switch to.
+// Read-only dump of what's ACTUALLY in this device's localStorage plus live sync state —
+// added after the v2.33.0 migration incident, where "資料不見了" could have meant the local
+// cache, the family binding, or Firestore itself, and there was no way to tell them apart
+// from the phone. Lists every bt_* key with its size/record counts rather than the data
+// itself, so a screenshot of this is safe to share and still pinpoints the layer at fault.
+function diagnosticsText() {
+  const lines = [];
+  lines.push('APP_VERSION: ' + (typeof APP_VERSION !== 'undefined' ? APP_VERSION : '?'));
+  lines.push('CACHE_VER: ' + (window.CACHE_VER || '(none)'));
+  lines.push('');
+  lines.push('--- 登入/家庭 ---');
+  lines.push('signedIn: ' + Sync.isSignedIn());
+  lines.push('email: ' + ((Sync.user && Sync.user.email) || '(未登入)'));
+  lines.push('syncState: ' + Sync.state + (Sync.message ? ' / ' + Sync.message : ''));
+  lines.push('familyId(Sync): ' + (Sync.familyId || '(null)'));
+  lines.push('availableFamilies: ' + JSON.stringify(Sync.availableFamilyIds || []));
+  lines.push('familyId(Store): ' + (Store._familyId || '(null)'));
+  lines.push('activeDataKey: ' + Store._dataKey());
+  lines.push('');
+  lines.push('--- 目前載入的資料 ---');
+  lines.push('events(全部): ' + Store.data.events.length + ' / 未刪除: ' + Store.liveEvents().length);
+  lines.push('growth(全部): ' + Store.data.growth.length);
+  lines.push('babyName: ' + (Store.data.settings.babyName || '(空)'));
+  lines.push('caregiver: ' + (Store.caregiver || '(空)'));
+  lines.push('');
+  lines.push('--- localStorage 實際內容 ---');
+  let keys = [];
+  try { keys = Object.keys(localStorage).filter((k) => k.indexOf('bt_') === 0).sort(); } catch (e) { lines.push('(無法讀取 localStorage: ' + e.message + ')'); }
+  keys.forEach((k) => {
+    let raw = '';
+    try { raw = localStorage.getItem(k) || ''; } catch (e) { raw = ''; }
+    if (k.indexOf('bt_data') === 0) {
+      let ev = '?', gr = '?', nm = '?';
+      try { const d = JSON.parse(raw); ev = (d.events || []).length; gr = (d.growth || []).length; nm = (d.settings && d.settings.babyName) || '(空)'; } catch (e) { ev = gr = nm = '(解析失敗)'; }
+      lines.push(k + ': ' + (raw.length / 1024).toFixed(1) + 'KB, events=' + ev + ', growth=' + gr + ', name=' + nm);
+    } else {
+      lines.push(k + ': ' + raw);
+    }
+  });
+  return lines.join('\n');
+}
 function renderFamilySwitchButton() {
   const multi = Sync.isSignedIn() && Sync.availableFamilyIds && Sync.availableFamilyIds.length > 1;
   if (!multi) return `<button disabled style="width:100%;margin-top:12px;background:transparent;border:1.5px solid var(--line);border-radius:14px;padding:12px;font-size:13px;font-weight:700;color:var(--text3);">🔀 切換寶寶（僅單一寶寶帳號無法使用）</button>`;
@@ -1552,6 +1593,14 @@ function renderSettings(state) {
       <div class="card" style="padding:16px;">
         <p style="font-size:11px;color:var(--text3);margin-bottom:12px;line-height:1.5;">下載一份完整資料快照（喝奶/排便/尿尿/成長紀錄），存到雲端硬碟或信箱給自己，作為額外保險。</p>
         <button onclick="A.doBackup()" style="width:100%;background:var(--card2);border:1.5px solid var(--inpBorder);border-radius:16px;padding:13px;font-size:14px;font-weight:700;color:var(--text);">💾 下載備份 JSON</button>
+      </div>
+    </div>
+    <div style="padding:18px 16px 0;">
+      ${sectionLabel('診斷資訊')}
+      <div class="card" style="padding:16px;">
+        <p style="font-size:11px;color:var(--text3);margin-bottom:12px;line-height:1.5;">遇到「資料消失」之類的問題時，點這裡把這支手機目前的實際儲存狀態列出來，截圖回報。</p>
+        <button onclick="A.toggleDiagnostics()" style="width:100%;background:var(--card2);border:1.5px solid var(--inpBorder);border-radius:16px;padding:13px;font-size:14px;font-weight:700;color:var(--text);">🩺 ${state.showDiagnostics ? '隱藏' : '顯示'}診斷資訊</button>
+        ${state.showDiagnostics ? `<pre style="margin-top:12px;padding:12px;background:var(--card2);border-radius:12px;font-size:10px;line-height:1.6;color:var(--text2);white-space:pre-wrap;word-break:break-all;overflow-x:auto;">${esc(diagnosticsText())}</pre>` : ''}
       </div>
     </div>
     <div style="padding:18px 16px 0;">
