@@ -147,7 +147,7 @@ function renderPrediction() {
         <p style="font-size:34px;font-weight:800;letter-spacing:-1.5px;line-height:1;color:var(--text);">${hm(p.nextTime)}${amtLabel}</p>
         <p style="font-size:13px;color:var(--text2);font-weight:500;margin-top:4px;">${cd}</p>
       </div>
-      <div onpointerdown="A.startPredictionPress()" onpointerup="A.endPredictionPress()" onpointerleave="A.endPredictionPress()" style="width:62px;height:62px;border-radius:50%;background:var(--card2);display:flex;align-items:center;justify-content:center;font-size:30px;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;touch-action:none;">🍼</div>
+      <div onpointerdown="A.startPredictionPress()" onpointerup="A.endPredictionPress()" onpointerleave="A.endPredictionPress()" onclick="A.tapPredictionIcon()" style="width:62px;height:62px;border-radius:50%;background:var(--card2);display:flex;align-items:center;justify-content:center;font-size:30px;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;touch-action:none;">🍼</div>
     </div>`;
   }
   return `<div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;">

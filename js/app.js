@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.30.2';
+const APP_VERSION = '2.31.0';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -76,6 +76,7 @@ const App = {
   _glowTimer: null,
   _statsSwipe: null,
   _predPressTimer: null,
+  _predLongFired: false,
 
   init() {
     Store.init();
@@ -151,14 +152,40 @@ const App = {
   },
   // Long-press the home "next feed" icon to reveal the prediction-vs-actual overlay on
   // today's timeline (see renderTodayTimeline) — hidden by default, purely a debugging/
-  // curiosity view, not part of the everyday UI.
+  // curiosity view, not part of the everyday UI. A plain tap (see tapPredictionIcon) opens
+  // a Google Calendar reminder for the predicted feed instead — same long-press-vs-tap
+  // pattern as tap()/startPress() for the record buttons.
   startPredictionPress() {
+    this._predLongFired = false;
     clearTimeout(this._predPressTimer);
     this._predPressTimer = setTimeout(() => {
+      this._predLongFired = true;
       this.set({ showPredictionOverlay: !this.state.showPredictionOverlay });
     }, 450);
   },
   endPredictionPress() { clearTimeout(this._predPressTimer); },
+  tapPredictionIcon() {
+    if (this._predLongFired) { this._predLongFired = false; return; }
+    this.openNextFeedReminder();
+  },
+  // Opens Google Calendar's "quick add" screen pre-filled with the predicted next feed —
+  // deliberately WITHOUT a `src=` (target calendar) param: that screen's own calendar
+  // picker already shows whichever Google account is signed into that tap, letting each
+  // caregiver pick their own calendar rather than this app hardcoding one for everyone.
+  // One-off event, not a recurring/synced one — matches "a reminder for this ONE feed",
+  // not an ongoing calendar integration.
+  openNextFeedReminder() {
+    const p = this.predict();
+    if (p.status !== 'ok') { this.toast('⚠️', '還沒有足夠的紀錄可以預測下一餐'); return; }
+    const start = p.nextTime;
+    const end = new Date(start.getTime() + 15 * 60000);
+    const gcalStamp = (d) => d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+    const amt = this.predictAmount();
+    const text = encodeURIComponent('🍼 餵奶提醒');
+    const details = encodeURIComponent('預計下一餐時間' + (amt != null ? `，約 ${amt}ml` : '') + '（由寶寶日誌 App 產生）');
+    const url = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${text}&dates=${gcalStamp(start)}/${gcalStamp(end)}&details=${details}`;
+    window.open(url, '_blank');
+  },
 
   // ---- navigation ----
   goHome() { this.set({ screen: 'home', sheet: null }); },
