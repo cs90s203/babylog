@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.33.3';
+const APP_VERSION = '2.33.4';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -90,6 +90,10 @@ const App = {
     // data-loss incident in CHANGELOG) — this is rare (storage quota exceeded, private-
     // browsing restrictions) but should never again be invisible to the user.
     Store._onPersistError = () => this.toast('⚠️', '本機儲存空間可能已滿，這筆變更可能沒存到手機上（雲端仍會嘗試同步）');
+    // Same reasoning for the other direction: a failed cloud push means this record exists
+    // only on this phone. Silently logging that is what let a day's records go unbacked-up
+    // (see CHANGELOG 2.33.4), so tell the user the moment it happens.
+    Sync._onPushError = () => this.toast('⚠️', '紀錄沒能上傳到雲端，目前只存在這支手機——請看設定→同步與帳號');
     if (window.matchMedia) {
       const mq = window.matchMedia('(prefers-color-scheme: dark)');
       const handler = () => { if (this.state.theme === 'auto') this.rerender(); };

@@ -196,7 +196,9 @@ const Sync = {
     // settings before the listener below even gets a chance to pull them down.
     if (Store.data.settings && Store.data.settings.updatedAt) { batch.set(fbDb.doc(`${familyPath()}/settings/main`), Store.data.settings, { merge: true }); n++; }
     if (n === 0) return;
-    batch.commit().catch((err) => console.error("initial catch-up push failed:", err));
+    // Same visibility rule as pushDoc: if this catch-up push fails, this device is holding
+    // records the cloud has never seen — that must be surfaced, not just logged.
+    batch.commit().then(() => this._notePushSuccess()).catch((err) => this._notePushFailure(err));
   },
 
   // ---- real-time listeners: remote change -> merge into Store.data -> re-render ----
@@ -257,17 +259,42 @@ const Sync = {
   },
 
   // ---- local -> cloud pushes (wired up as Store._cloudPush, see store.js) ----
+  // INCIDENT (see CHANGELOG 2.33.4): push failures used to be swallowed into console.error
+  // only. A device whose pushes were silently failing kept saving records to localStorage
+  // alone, with the UI still showing a healthy "✓ 即時同步中" — so "these records never
+  // reached the other phone" went unnoticed for hours, and when a later reload read from a
+  // different storage key, that batch of cloud-less records was simply gone. Every push
+  // failure is now counted and surfaced (see renderSyncPill / _onPushError), so
+  // "saved locally but NOT in the cloud" can never again look identical to a healthy sync.
+  pushFailures: 0,
+  lastPushError: "",
+  _onPushError: null, // set by app.js to raise a toast the first time this happens
+  _notePushFailure(err) {
+    this.pushFailures++;
+    this.lastPushError = (err && (err.code || err.message)) || String(err);
+    console.error("cloud push failed:", err);
+    if (this.pushFailures === 1 && this._onPushError) this._onPushError(err);
+    this.listeners.forEach((fn) => fn()); // refresh the sync pill so the warning shows up
+  },
+  // A push that succeeds after earlier failures means the connection recovered — clear the
+  // warning rather than leaving a stale "some records may not be in the cloud" banner up.
+  _notePushSuccess() {
+    if (this.pushFailures === 0) return;
+    this.pushFailures = 0;
+    this.lastPushError = "";
+    this.listeners.forEach((fn) => fn());
+  },
   pushDoc(kind, doc) {
     if (!this.isSignedIn() || !fbDb) return;
-    fbDb.doc(`${familyPath()}/${kind}/${doc.id}`).set(doc, { merge: true }).catch((err) => {
-      console.error("cloud push failed:", err);
-    });
+    fbDb.doc(`${familyPath()}/${kind}/${doc.id}`).set(doc, { merge: true })
+      .then(() => this._notePushSuccess())
+      .catch((err) => this._notePushFailure(err));
   },
   pushSettings(settings) {
     if (!this.isSignedIn() || !fbDb) return;
-    fbDb.doc(`${familyPath()}/settings/main`).set(settings, { merge: true }).catch((err) => {
-      console.error("cloud push (settings) failed:", err);
-    });
+    fbDb.doc(`${familyPath()}/settings/main`).set(settings, { merge: true })
+      .then(() => this._notePushSuccess())
+      .catch((err) => this._notePushFailure(err));
   },
 };
 
