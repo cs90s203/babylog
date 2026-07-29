@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>兩台裝置同步模擬測試</title>
+<style>body{font-family:ui-monospace,monospace;font-size:12px;padding:12px;background:#111;color:#eee}
+pre{white-space:pre-wrap;line-height:1.6}iframe{display:none}
+.pass{color:#5CB85C}.fail{color:#E5573D}.info{color:#79C3F0}</style>
+</head>
+<body>
+<h3>兩台裝置同步模擬（A=cs90s203 / B=snowy5420）</h3>
+<pre id="out">執行中…</pre>
+<iframe id="devA" src="index.html?sim=A"></iframe>
+<iframe id="devB" src="index.html?sim=B"></iframe>
+<script>
+// Local two-device simulation of the real sync contract. Each iframe loads the actual app,
+// so each gets its OWN Store/Sync singletons — i.e. two independent "phones". A fake
+// Firestore below stands in for the network so the real pushDoc/mergeRemoteBatch code paths
+// run end to end without needing anyone's Google account.
+const out = document.getElementById('out');
+const log = [];
+function say(s, cls) { log.push(cls ? `<span class="${cls}">${s}</span>` : s); out.innerHTML = log.join('\n'); }
+function check(name, cond, detail) { say((cond ? '✓ PASS  ' : '✗ FAIL  ') + name + (detail ? '   → ' + detail : ''), cond ? 'pass' : 'fail'); return cond; }
+
+// ---- fake cloud: mimics Firestore's set(merge:true) + onSnapshot(docChanges) ----
+const cloud = { events: {}, growth: {}, settings: {} };
+const watchers = []; // {kind, cb, seen:Set}
+function cloudSet(kind, id, data) {
+  cloud[kind][id] = Object.assign({}, cloud[kind][id] || {}, data);
+  notify(kind);
+}
+function notify(kind) {
+  watchers.filter(w => w.kind === kind).forEach(w => {
+    // Only deliver docs that changed since this watcher last saw them — same semantics as
+    // Firestore's docChanges() (the initial fire delivers everything as "added").
+    const changes = [];
+    Object.keys(cloud[kind]).forEach(id => {
+      const stamp = JSON.stringify(cloud[kind][id]);
+      if (w.seen.get(id) !== stamp) { w.seen.set(id, stamp); changes.push({ id, data: cloud[kind][id] }); }
+    });
+    if (changes.length) w.cb(changes);
+  });
+}
+function cloudWatch(kind, cb) {
+  const w = { kind, cb, seen: new Map() };
+  watchers.push(w);
+  setTimeout(() => notify(kind), 0); // initial snapshot, async like the real SDK
+  return () => { const i = watchers.indexOf(w); if (i !== -1) watchers.splice(i, 1); };
+}
+
+// ---- wire one iframe's app up to the fake cloud, replacing only the transport ----
+function attachFakeTransport(win, label) {
+  // store.js/firebase-sync.js declare Store/Sync with top-level `const`, which lands in the
+  // global lexical scope rather than on `window` — so reach them through the frame's own
+  // eval instead of property access.
+  const { Store, Sync } = win.eval('({ Store: Store, Sync: Sync })');
+  Sync.user = { email: label + '@test', displayName: label, photoURL: '' };
+  Sync.familyId = 'default';
+  Sync.availableFamilyIds = ['default'];
+  Store.bindFamily('default');
+
+  Sync.pushDoc = (kind, doc) => { cloudSet(kind, doc.id, JSON.parse(JSON.stringify(doc))); Sync._notePushSuccess && Sync._notePushSuccess(); };
+  Sync.pushSettings = (s) => { cloudSet('settings', 'main', JSON.parse(JSON.stringify(s))); };
+  Store._cloudPush = (kind, doc) => Sync.pushDoc(kind, doc);
+  Store._cloudPushSettings = (s) => Sync.pushSettings(s);
+
+  Sync._unsubs = [];
+  Sync._detachListeners = function () { (this._unsubs || []).forEach(u => u()); this._unsubs = []; };
+  Sync._attachListeners = function () {
+    this._detachListeners();
+    this._unsubs.push(cloudWatch('events', (changes) => Store.mergeRemoteBatch('events', changes.map(c => Object.assign({ id: c.id }, c.data)))));
+    this._unsubs.push(cloudWatch('growth', (changes) => Store.mergeRemoteBatch('growth', changes.map(c => Object.assign({ id: c.id }, c.data)))));
+    this._set('done');
+  };
+  Sync._attachListeners();
+  return { Store, Sync };
+}
+
+const wait = (ms) => new Promise(r => setTimeout(r, ms));
+
+async function run() {
+  const A = document.getElementById('devA').contentWindow;
+  const B = document.getElementById('devB').contentWindow;
+
+  // Both iframes share this origin's localStorage, so give each device its own namespace,
+  // otherwise they'd literally be the same phone and the test would prove nothing.
+  A.localStorage.setItem('bt_caregiver', 'A-爸爸');
+  const devA = attachFakeTransport(A, 'A');
+  const devB = attachFakeTransport(B, 'B');
+  // Separate the two devices' local caches by pointing them at different storage keys.
+  devB.Store._dataKey = () => 'bt_data::default__B';
+  devB.Store.data = { events: [], growth: [], settings: Object.assign({}, devB.Store.data.settings) };
+  devB.Store.caregiver = 'B-媽媽';
+  devA.Store.data = { events: [], growth: [], settings: Object.assign({}, devA.Store.data.settings) };
+  devA.Store.persist(); devB.Store.persist();
+
+  say('--- 情境 1：A 新增一筆餵奶，B 應該收到 ---', 'info');
+  const ev = devA.Store.addEvent('milk', new Date(), { breastMl: 120, formulaMl: 0, amountMl: 120 });
+  await wait(60);
+  const gotOnB = devB.Store.data.events.find(e => e.id === ev.id);
+  check('B 收到 A 的新紀錄', !!gotOnB, gotOnB ? `${gotOnB.breastMl}ml by=${gotOnB.by}` : 'B 完全沒收到');
+  check('內容完整（奶量正確）', !!gotOnB && gotOnB.breastMl === 120, gotOnB ? String(gotOnB.breastMl) : '-');
+
+  say('\n--- 情境 2：B 新增一筆，A 應該收到（反向）---', 'info');
+  const ev2 = devB.Store.addEvent('poop', new Date(), {});
+  await wait(60);
+  check('A 收到 B 的新紀錄', !!devA.Store.data.events.find(e => e.id === ev2.id));
+
+  say('\n--- 情境 3：A 編輯自己的紀錄，B 應該看到更新 ---', 'info');
+  devA.Store.updateEvent(ev.id, { breastMl: 90, amountMl: 90 });
+  await wait(60);
+  const editedOnB = devB.Store.data.events.find(e => e.id === ev.id);
+  check('B 看到編輯後的值', !!editedOnB && editedOnB.breastMl === 90, editedOnB ? String(editedOnB.breastMl) + 'ml' : '-');
+
+  say('\n--- 情境 4：A 刪除紀錄，B 應該也視為已刪除 ---', 'info');
+  devA.Store.deleteEvent(ev2.id);
+  await wait(60);
+  const delOnB = devB.Store.data.events.find(e => e.id === ev2.id);
+  check('B 的該筆標記為已刪除', !!delOnB && delOnB.deleted === true);
+  check('B 的 liveEvents 不含該筆', !devB.Store.liveEvents().find(e => e.id === ev2.id));
+
+  say('\n--- 情境 5：離線期間累積，重新連線後補送（模擬今天的狀況）---', 'info');
+  devA.Sync._detachListeners();
+  const savedPush = devA.Sync.pushDoc;
+  devA.Sync.pushDoc = () => { throw new Error('offline'); };
+  devA.Store._cloudPush = (k, d) => { try { devA.Sync.pushDoc(k, d); } catch (e) { devA.Sync._notePushFailure(e); } };
+  const offlineEv = devA.Store.addEvent('milk', new Date(), { breastMl: 70, formulaMl: 0, amountMl: 70 });
+  await wait(30);
+  check('離線新增時有偵測到上傳失敗', devA.Sync.pushFailures > 0, 'pushFailures=' + devA.Sync.pushFailures);
+  check('B 此時收不到（預期行為）', !devB.Store.data.events.find(e => e.id === offlineEv.id));
+
+  // reconnect: restore transport and run the catch-up push the real app does on sign-in
+  devA.Sync.pushDoc = savedPush;
+  devA.Store._cloudPush = (k, d) => devA.Sync.pushDoc(k, d);
+  devA.Store.data.events.forEach(e => devA.Sync.pushDoc('events', e));
+  devA.Sync._attachListeners();
+  await wait(80);
+  check('重新連線後 B 補收到離線那筆', !!devB.Store.data.events.find(e => e.id === offlineEv.id));
+
+  say('\n--- 情境 6：同一筆被兩邊各自改（衝突）---', 'info');
+  const cEv = devA.Store.addEvent('milk', new Date(), { breastMl: 10, formulaMl: 0, amountMl: 10 });
+  await wait(60);
+  devB.Store.updateEvent(cEv.id, { breastMl: 55, amountMl: 55 }); // B 後改，應該勝出
+  await wait(60);
+  const aFinal = devA.Store.data.events.find(e => e.id === cEv.id);
+  check('較晚的修改勝出（A 端看到 B 的值）', !!aFinal && aFinal.breastMl === 55, aFinal ? String(aFinal.breastMl) : '-');
+
+  say('\n--- 情境 7：舊資料不應覆蓋新資料 ---', 'info');
+  const staleDoc = Object.assign({}, aFinal, { breastMl: 999, updatedAt: '2020-01-01T00:00:00.000Z' });
+  devA.Store.mergeRemoteBatch('events', [staleDoc]);
+  const afterStale = devA.Store.data.events.find(e => e.id === cEv.id);
+  check('過期資料被正確忽略', afterStale.breastMl === 55, String(afterStale.breastMl));
+
+  const fails = log.filter(l => l.includes('FAIL')).length;
+  say('\n=== 結果：' + (fails === 0 ? '全部通過' : fails + ' 項失敗') + ' ===', fails === 0 ? 'pass' : 'fail');
+  window.__done = true; window.__fails = fails;
+}
+
+let loaded = 0;
+['devA', 'devB'].forEach(id => document.getElementById(id).addEventListener('load', () => {
+  if (++loaded === 2) setTimeout(() => run().catch(e => { say('✗ 測試本身出錯: ' + e.message + '\n' + e.stack, 'fail'); window.__done = true; window.__fails = 99; }), 300);
+}));
+</script>
+</body>
+</html>

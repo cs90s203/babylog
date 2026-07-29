@@ -124,19 +124,30 @@ const Sync = {
     this._set("syncing");
   },
 
-  // Pull-to-refresh (see main.js) used to be a plain location.reload() — correct but slow,
-  // since it re-fetches every script, re-initializes the Firebase SDK, and re-resolves auth
-  // from scratch before a single listener is even re-attached. The real-time listeners
-  // already keep data current on their own; a manual refresh only needs to force a fresh
-  // fetch from the server (bypassing whatever's in the SDK's local IndexedDB cache), which
-  // detach-then-reattach already does — no reload required. Falls back to reload() when not
-  // signed in, since there's no live sync state to kick in that case (matches the old
-  // "start clean" behavior for a genuinely broken/unauthenticated session).
+  // Pull-to-refresh (see main.js). This used to be location.reload(); 2.31.1 replaced it with
+  // a plain detach-then-reattach to skip the reload cost, which turned out to be a REGRESSION
+  // (see CHANGELOG 2.33.5): with enablePersistence on, re-attaching a listener is happily
+  // served from the local IndexedDB cache, so if the SDK's server connection is wedged (very
+  // easy to hit on a phone that's been backgrounded//sleeping), reattaching re-reads the same
+  // stale cache and still reports success — the exact "shows ✓ 即時同步中 but never receives
+  // the other phone's records" symptom, with the previous escape hatch (a full reload
+  // rebuilding the whole SDK) removed. Now the network layer itself is torn down and rebuilt
+  // via disableNetwork/enableNetwork, which forces a real server round-trip, and any failure
+  // falls back to the old reload so the user is never left with a refresh that quietly did
+  // nothing.
   forceResync() {
     if (!this.isSignedIn() || !fbDb) { location.reload(); return; }
-    this._detachListeners();
-    this._attachListeners();
     this._set("syncing");
+    this._detachListeners();
+    const rebuild = fbDb.disableNetwork()
+      .then(() => fbDb.enableNetwork())
+      .then(() => { this._attachListeners(); });
+    if (rebuild && rebuild.catch) {
+      rebuild.catch((err) => {
+        console.error("forceResync network rebuild failed, falling back to reload:", err);
+        location.reload();
+      });
+    }
   },
 
   // Display label for a family in the switcher UI — reads that family's own settings/main
@@ -218,17 +229,29 @@ const Sync = {
     };
 
     unsubEvents = fbDb.collection(`${familyPath()}/events`).onSnapshot(
-      (snap) => { Store.mergeRemoteBatch("events", snap.docChanges().map((c) => ({ id: c.doc.id, ...c.doc.data() }))); settled(); },
+      (snap) => { this._noteSnapshotSource(snap); Store.mergeRemoteBatch("events", snap.docChanges().map((c) => ({ id: c.doc.id, ...c.doc.data() }))); settled(); },
       (err) => this._onListenerError(err)
     );
     unsubGrowth = fbDb.collection(`${familyPath()}/growth`).onSnapshot(
-      (snap) => { Store.mergeRemoteBatch("growth", snap.docChanges().map((c) => ({ id: c.doc.id, ...c.doc.data() }))); settled(); },
+      (snap) => { this._noteSnapshotSource(snap); Store.mergeRemoteBatch("growth", snap.docChanges().map((c) => ({ id: c.doc.id, ...c.doc.data() }))); settled(); },
       (err) => this._onListenerError(err)
     );
     unsubSettings = fbDb.doc(`${familyPath()}/settings/main`).onSnapshot(
-      (doc) => { if (doc.exists) Store.mergeRemoteSettings(doc.data()); settled(); },
+      (doc) => { this._noteSnapshotSource(doc); if (doc.exists) Store.mergeRemoteSettings(doc.data()); settled(); },
       (err) => this._onListenerError(err)
     );
+  },
+  // With enablePersistence on, a wedged server connection doesn't raise an error — onSnapshot
+  // just keeps serving the local IndexedDB cache, so the app looked perfectly healthy while
+  // never seeing the other phone's records (see CHANGELOG 2.33.5). metadata.fromCache is the
+  // only signal that distinguishes the two, so track it and let the UI say so rather than
+  // claiming live sync.
+  fromCacheOnly: false,
+  _noteSnapshotSource(snap) {
+    const cached = !!(snap && snap.metadata && snap.metadata.fromCache);
+    if (cached === this.fromCacheOnly) return;
+    this.fromCacheOnly = cached;
+    this.listeners.forEach((fn) => fn());
   },
   _detachListeners() {
     clearTimeout(this._retryTimer);

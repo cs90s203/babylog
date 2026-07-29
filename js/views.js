@@ -1421,7 +1421,9 @@ function renderAuthCard() {
     // so a push failure overrides the status line no matter what the listeners report.
     const statusLabel = Sync.pushFailures > 0
       ? `⚠️ 有 ${Sync.pushFailures} 筆變更沒上傳成功（${Sync.lastPushError}）`
+      : Sync.fromCacheOnly && Sync.state === 'done' ? '⚠️ 目前讀的是離線快取，沒連上伺服器'
       : Sync.state === 'done' ? '✓ 即時同步中' : Sync.state === 'syncing' ? '連接中…' : (Sync.message || '—');
+    const unhealthy = Sync.pushFailures > 0 || (Sync.fromCacheOnly && Sync.state === 'done');
     return `
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
         ${photo}
@@ -1432,10 +1434,12 @@ function renderAuthCard() {
         <button onclick="A.signOut()" style="flex-shrink:0;font-size:12px;color:#E5573D;background:none;border:1.5px solid #E5573D;border-radius:10px;padding:6px 12px;">登出</button>
       </div>
       <div style="display:flex;align-items:center;gap:8px;background:var(--card2);border-radius:12px;padding:10px 12px;">
-        <div style="width:8px;height:8px;border-radius:50%;background:${Sync.pushFailures > 0 ? '#E5573D' : Sync.state === 'done' ? '#5CB85C' : '#C8965A'};flex-shrink:0;"></div>
-        <p style="font-size:12px;color:${Sync.pushFailures > 0 ? '#E5573D' : 'var(--text2)'};">${esc(statusLabel)}</p>
+        <div style="width:8px;height:8px;border-radius:50%;background:${unhealthy ? '#E5573D' : Sync.state === 'done' ? '#5CB85C' : '#C8965A'};flex-shrink:0;"></div>
+        <p style="font-size:12px;color:${unhealthy ? '#E5573D' : 'var(--text2)'};">${esc(statusLabel)}</p>
       </div>
-      ${Sync.pushFailures > 0 ? `<p style="font-size:10.5px;color:#D2654A;margin-top:8px;line-height:1.5;">這些紀錄目前<b>只存在這支手機</b>，還沒進雲端。請先確認網路，並在資料備份區「下載備份 JSON」留一份，再重新整理讓它重試。</p>` : ''}`;
+      ${Sync.pushFailures > 0 ? `<p style="font-size:10.5px;color:#D2654A;margin-top:8px;line-height:1.5;">這些紀錄目前<b>只存在這支手機</b>，還沒進雲端。請先確認網路，並在資料備份區「下載備份 JSON」留一份，再重新整理讓它重試。</p>` : ''}
+      ${Sync.fromCacheOnly && Sync.state === 'done' ? `<button onclick="A.forceResync()" style="width:100%;margin-top:10px;background:var(--card2);border:1.5px solid #E5573D;border-radius:14px;padding:11px;font-size:13px;font-weight:700;color:#E5573D;">🔄 重新連線伺服器</button>
+      <p style="font-size:10.5px;color:#D2654A;margin-top:8px;line-height:1.5;">這支手機顯示的是本機快取，<b>看不到其他人的新紀錄</b>。點上面的按鈕重建連線。</p>` : ''}`;
   }
   const warn = Sync.state === 'unauthorized'
     ? `<div style="display:flex;gap:6px;align-items:flex-start;margin-bottom:12px;background:var(--card2);border-radius:12px;padding:10px 12px;"><span style="font-size:13px;">⚠️</span><p style="font-size:11px;color:#D2654A;line-height:1.5;">${esc(Sync.message)}，請改用授權過的 Google 帳號登入。</p></div>`
@@ -1468,6 +1472,7 @@ function diagnosticsText() {
   lines.push('familyId(Store): ' + (Store._familyId || '(null)'));
   lines.push('activeDataKey: ' + Store._dataKey());
   lines.push('pushFailures: ' + Sync.pushFailures + (Sync.lastPushError ? ' / ' + Sync.lastPushError : ''));
+  lines.push('fromCacheOnly: ' + Sync.fromCacheOnly + (Sync.fromCacheOnly ? '  ← 沒連上伺服器！' : ''));
   lines.push('');
   lines.push('--- 目前載入的資料 ---');
   lines.push('events(全部): ' + Store.data.events.length + ' / 未刪除: ' + Store.liveEvents().length);
