@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.32.1';
+const APP_VERSION = '2.33.0';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -168,12 +168,14 @@ const App = {
     if (this._predLongFired) { this._predLongFired = false; return; }
     this.openNextFeedReminder();
   },
-  // Opens Google Calendar's "quick add" screen pre-filled with the predicted next feed —
-  // deliberately WITHOUT a `src=` (target calendar) param: that screen's own calendar
-  // picker already shows whichever Google account is signed into that tap, letting each
-  // caregiver pick their own calendar rather than this app hardcoding one for everyone.
-  // One-off event, not a recurring/synced one — matches "a reminder for this ONE feed",
-  // not an ongoing calendar integration.
+  // Opens Google Calendar's "quick add" screen pre-filled with the predicted next feed.
+  // No `src=` (target calendar) param by default — that screen's own calendar picker
+  // already shows whichever Google account is signed into that tap, letting each caregiver
+  // pick their own calendar rather than this app hardcoding one for everyone. If this
+  // device has saved a preferred calendar ID (設定 → 餵奶提醒, device-local, see
+  // setGcalId), pass it as `src=` so it skips straight to that calendar instead of asking
+  // every time. One-off event, not a recurring/synced one — matches "a reminder for this
+  // ONE feed", not an ongoing calendar integration.
   openNextFeedReminder() {
     const p = this.predict();
     if (p.status !== 'ok') { this.toast('⚠️', '還沒有足夠的紀錄可以預測下一餐'); return; }
@@ -183,7 +185,9 @@ const App = {
     const amt = this.predictAmount();
     const text = encodeURIComponent('🍼 餵奶提醒');
     const details = encodeURIComponent('預計下一餐時間' + (amt != null ? `，約 ${amt}ml` : '') + '（由寶寶日誌 App 產生）');
-    const url = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${text}&dates=${gcalStamp(start)}/${gcalStamp(end)}&details=${details}`;
+    const gcalId = (Store.local('gcal_id') || '').trim();
+    const src = gcalId ? `&src=${encodeURIComponent(gcalId)}` : '';
+    const url = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${text}&dates=${gcalStamp(start)}/${gcalStamp(end)}&details=${details}${src}`;
     window.open(url, '_blank');
   },
 
@@ -946,6 +950,9 @@ const App = {
   decAlarm() { Store.updateSettings({ alarmOffsetMinutes: Math.max(-60, (Store.data.settings.alarmOffsetMinutes || 0) - 5) }); },
   setExportFrom(v) { this.set({ exportFrom: v }); },
   setExportTo(v) { this.set({ exportTo: v }); },
+  // Device-local (not synced — see js/store.js's local()), so each caregiver can pin
+  // openNextFeedReminder() to their own calendar without affecting anyone else's device.
+  setGcalId(v) { Store.local('gcal_id', v.trim()); this.rerender(); },
   doExport() {
     downloadCsv(this.state.exportFrom, this.state.exportTo);
     this.toast('📅', 'CSV 已下載');

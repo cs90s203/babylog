@@ -1532,6 +1532,16 @@ function renderSettings(state) {
       </div>
     </div>
     <div style="padding:18px 16px 0;">
+      ${sectionLabel('餵奶提醒')}
+      <div class="card" style="padding:16px;">
+        <p style="font-size:11px;color:var(--text2);font-weight:600;margin-bottom:5px;">偏好日曆 ID（選填）</p>
+        <input type="text" value="${esc(Store.local('gcal_id') || '')}" onchange="A.setGcalId(this.value)" placeholder="xxxx@group.calendar.google.com" style="font-size:13px;" />
+        <p style="font-size:10.5px;color:var(--text3);margin-top:8px;line-height:1.5;">填了之後，點首頁奶瓶 icon 產生的提醒會直接開啟這個日曆，不用每次自己選。
+          只存在<b style="color:var(--text2);">這支手機</b>，不會同步給其他照顧者——每個人可以各自填自己想固定用的日曆。
+          日曆 ID 在 Google Calendar 網頁版：該日曆設定和共用 → 日曆整合 → 日曆 ID。留空則維持每次自己選。</p>
+      </div>
+    </div>
+    <div style="padding:18px 16px 0;">
       ${sectionLabel('同步與帳號')}
       <div class="card" style="padding:16px;">
         ${renderAuthCard()}
