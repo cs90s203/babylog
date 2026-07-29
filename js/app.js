@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.33.0';
+const APP_VERSION = '2.33.1';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -85,6 +85,10 @@ const App = {
     this.state.nurse = this._loadNurse(); // resume a nursing session left running before reload/close
     Store.onChange(() => this.rerender());
     Sync.onChange(() => this.rerender());
+    // Surface local-storage write failures instead of letting them fail silently (see the
+    // data-loss incident in CHANGELOG) — this is rare (storage quota exceeded, private-
+    // browsing restrictions) but should never again be invisible to the user.
+    Store._onPersistError = () => this.toast('⚠️', '本機儲存空間可能已滿，這筆變更可能沒存到手機上（雲端仍會嘗試同步）');
     if (window.matchMedia) {
       const mq = window.matchMedia('(prefers-color-scheme: dark)');
       const handler = () => { if (this.state.theme === 'auto') this.rerender(); };
