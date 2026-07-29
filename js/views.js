@@ -443,6 +443,24 @@ function renderTodayTimeline(state) {
   nodes += `<div style="position:absolute;left:${axisX - 4}px;right:0;top:${ny}px;height:0.8px;background:var(--accent);z-index:3;"></div>
     <div style="position:absolute;left:0;top:${ny + 3}px;font-size:9px;font-weight:800;color:var(--accent);background:var(--card2);padding:1px 6px;border-radius:6px;z-index:3;">NOW ${hm(now)}</div>`;
 
+  // Predicted-next-feed line — always visible (unlike the accuracyById overlay above,
+  // which stays gated behind long-press), so a caregiver glancing at the timeline gets the
+  // same "when's the next feed" info the home card already shows, without leaving the
+  // screen. Skipped when the prediction lands outside the visible window (rare — only
+  // happens with unusually long feed intervals) or would visually collide with the NOW
+  // line/label (e.g. "overdue" predictions sitting at or before now).
+  const pred = AppRef().predict();
+  if (pred.status === 'ok') {
+    const predPos = posOf(pred.nextTime);
+    if (predPos <= endH + 1e-9) {
+      const py = yOfAdjusted(predPos);
+      if (Math.abs(py - ny) >= 16) {
+        nodes += `<div style="position:absolute;left:${axisX - 4}px;right:0;top:${py}px;height:0.8px;background:#79C3F0;z-index:2;"></div>
+          <div style="position:absolute;left:0;top:${py + 3}px;font-size:9px;font-weight:800;color:#79C3F0;background:var(--card2);padding:1px 6px;border-radius:6px;z-index:2;">預計 ${hm(pred.nextTime)}</div>`;
+      }
+    }
+  }
+
   // compact=true abbreviates the label to just emoji+one-character (排便→便, 尿尿→尿) —
   // used when a chip is part of an overlapping stack (see below) and doesn't have room to
   // show its full label without the pile becoming unreadable.
