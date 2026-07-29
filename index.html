@@ -7,7 +7,16 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>👶</text></svg>">
 <meta name="theme-color" content="#FAF6EF">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="stylesheet" href="css/style.css">
+<!-- CACHE_VER: bump this alongside every APP_VERSION change in js/app.js. The querystring
+     on every local script/style below exists ONLY to force browsers (and GitHub Pages'/the
+     CDN's own caching) to fetch a fresh copy on the next load — the file server sends no
+     Cache-Control headers, so without a URL change, a phone can silently keep running
+     JS from weeks ago even after "reopening the app" or a manual refresh (this bit
+     babylog itself once during dev: a code fix looked correct in the repo but a real
+     device kept running the pre-fix behavior because nothing about the request URL had
+     changed). See CHANGELOG.md for the incident this was added to fix. -->
+<script>window.CACHE_VER = '2.31.2';</script>
+<link rel="stylesheet" href="css/style.css?v=2.31.2">
 <script>
 // Set the theme attribute on <html> before first paint so there's no flash of the
 // wrong theme (or unstyled white) while the main scripts below are still loading.
@@ -30,17 +39,20 @@
      file only references the others' globals from inside function bodies (never at
      top-level), so this load order just needs every file present before main.js runs. -->
 <!-- Firebase compat SDK: exposes a global `firebase` namespace, works with plain
-     <script src> tags like everything else here (no bundler/ES modules needed). -->
+     <script src> tags like everything else here (no bundler/ES modules needed). Not
+     version-busted like the local scripts below — it's pinned to an exact SDK version
+     (9.23.0) in the URL path already, so its own URL only ever changes when that version
+     number is deliberately bumped. -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
-<script src="js/who-data.js"></script>
-<script src="js/predict.js"></script>
-<script src="js/store.js"></script>
-<script src="js/csv.js"></script>
-<script src="js/firebase-sync.js"></script>
-<script src="js/views.js"></script>
-<script src="js/app.js"></script>
-<script src="js/main.js"></script>
+<script src="js/who-data.js?v=2.31.2"></script>
+<script src="js/predict.js?v=2.31.2"></script>
+<script src="js/store.js?v=2.31.2"></script>
+<script src="js/csv.js?v=2.31.2"></script>
+<script src="js/firebase-sync.js?v=2.31.2"></script>
+<script src="js/views.js?v=2.31.2"></script>
+<script src="js/app.js?v=2.31.2"></script>
+<script src="js/main.js?v=2.31.2"></script>
 </body>
 </html>
