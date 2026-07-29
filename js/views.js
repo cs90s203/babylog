@@ -1464,6 +1464,20 @@ function diagnosticsText() {
   lines.push('');
   lines.push('--- 目前載入的資料 ---');
   lines.push('events(全部): ' + Store.data.events.length + ' / 未刪除: ' + Store.liveEvents().length);
+  // Today's records listed individually, INCLUDING tombstoned ones — this is what
+  // distinguishes "the record is gone entirely" (missing from the list) from "the record is
+  // still here but was wrongly marked deleted by a sync merge" (present, tagged 已刪除).
+  {
+    const tk = dayKey(new Date());
+    const today = Store.data.events
+      .filter((e) => dayKey(new Date(e.time)) === tk)
+      .sort((a, b) => new Date(a.time) - new Date(b.time));
+    lines.push('今天全部筆數(含已刪除): ' + today.length);
+    today.forEach((e) => {
+      const amt = e.type === 'milk' ? ' ' + ((e.breastMl || 0) + (e.formulaMl || 0)) + 'ml' : '';
+      lines.push('  ' + hm(new Date(e.time)) + ' ' + e.type + amt + ' by=' + (e.by || '?') + (e.deleted ? '  ← 已刪除' : '') + '  upd=' + String(e.updatedAt || '').slice(11, 19));
+    });
+  }
   lines.push('growth(全部): ' + Store.data.growth.length);
   lines.push('babyName: ' + (Store.data.settings.babyName || '(空)'));
   lines.push('caregiver: ' + (Store.caregiver || '(空)'));
