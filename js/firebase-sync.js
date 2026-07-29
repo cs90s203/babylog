@@ -124,6 +124,21 @@ const Sync = {
     this._set("syncing");
   },
 
+  // Pull-to-refresh (see main.js) used to be a plain location.reload() — correct but slow,
+  // since it re-fetches every script, re-initializes the Firebase SDK, and re-resolves auth
+  // from scratch before a single listener is even re-attached. The real-time listeners
+  // already keep data current on their own; a manual refresh only needs to force a fresh
+  // fetch from the server (bypassing whatever's in the SDK's local IndexedDB cache), which
+  // detach-then-reattach already does — no reload required. Falls back to reload() when not
+  // signed in, since there's no live sync state to kick in that case (matches the old
+  // "start clean" behavior for a genuinely broken/unauthenticated session).
+  forceResync() {
+    if (!this.isSignedIn() || !fbDb) { location.reload(); return; }
+    this._detachListeners();
+    this._attachListeners();
+    this._set("syncing");
+  },
+
   // Display label for a family in the switcher UI — reads that family's own settings/main
   // doc (allowed since the signed-in email is a member of every id in availableFamilyIds),
   // cached in-memory so re-opening the switcher doesn't re-fetch. Currently-active family's
