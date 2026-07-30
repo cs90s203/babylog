@@ -66,11 +66,26 @@ const Store = {
   _cloudPush: null, // set by firebase-sync.js: function(kind, doc)
   _cloudPushSettings: null, // function(settings)
   _familyId: null, // null = not signed in / single-family account, else which family's data is loaded
+  _onPersistError: null, // set by app.js: function(err, context) -- a localStorage read/write failed
+  _onDataCorrupted: null, // set by app.js: function(context) -- stored JSON couldn't be parsed and was reset
+
+  // Every localStorage try/catch in this file used to swallow its error with an empty catch
+  // body -- each one individually looked harmless ("just fall back to a default"), but that's
+  // exactly the pattern that turned a real storage problem into what looked like catastrophic,
+  // unexplained data loss in three separate incidents this week. Every read/write failure now
+  // funnels through here so it's at least in the console, and reaches the user via the same
+  // toast Store.persist() already used for its own failures.
+  _reportStorageError(context, err) {
+    console.error('Store storage error (' + context + '):', err);
+    if (this._onPersistError) this._onPersistError(err, context);
+  },
 
   init() {
-    try { this._familyId = localStorage.getItem(FAMILY_ID_KEY) || null; } catch (e) { this._familyId = null; }
+    try { this._familyId = localStorage.getItem(FAMILY_ID_KEY) || null; }
+    catch (e) { this._familyId = null; this._reportStorageError('init:read family id', e); }
     this._loadFromDisk();
-    try { this.caregiver = localStorage.getItem(CAREGIVER_KEY) || ''; } catch (e) { this.caregiver = ''; }
+    try { this.caregiver = localStorage.getItem(CAREGIVER_KEY) || ''; }
+    catch (e) { this.caregiver = ''; this._reportStorageError('init:read caregiver', e); }
   },
 
   // Key this device's local cache is read from / written to. Staying on the single global
@@ -96,22 +111,38 @@ const Store = {
   _pendingLegacyMigration: false,
   _loadFromDisk() {
     let raw = null;
-    try { raw = localStorage.getItem(this._dataKey()); } catch (e) {}
+    try { raw = localStorage.getItem(this._dataKey()); }
+    catch (e) { this._reportStorageError('loadFromDisk:read ' + this._dataKey(), e); }
     this._pendingLegacyMigration = false;
     if (this._familyId && isEmptyDataBlob(raw)) {
       let owner = null;
-      try { owner = localStorage.getItem(LEGACY_OWNER_KEY); } catch (e) {}
+      try { owner = localStorage.getItem(LEGACY_OWNER_KEY); }
+      catch (e) { this._reportStorageError('loadFromDisk:read legacy owner', e); }
       if (!owner || owner === this._familyId) {
         let legacyRaw = null;
-        try { legacyRaw = localStorage.getItem(DATA_KEY); } catch (e) {}
+        try { legacyRaw = localStorage.getItem(DATA_KEY); }
+        catch (e) { this._reportStorageError('loadFromDisk:read legacy blob', e); }
         if (!isEmptyDataBlob(legacyRaw)) {
           raw = legacyRaw;
           this._pendingLegacyMigration = true;
-          if (!owner) { try { localStorage.setItem(LEGACY_OWNER_KEY, this._familyId); } catch (e) {} }
+          if (!owner) {
+            try { localStorage.setItem(LEGACY_OWNER_KEY, this._familyId); }
+            catch (e) { this._reportStorageError('loadFromDisk:write legacy owner', e); }
+          }
         }
       }
     }
-    try { this.data = raw ? JSON.parse(raw) : defaultData(); } catch (e) { this.data = defaultData(); }
+    try {
+      this.data = raw ? JSON.parse(raw) : defaultData();
+    } catch (e) {
+      this.data = defaultData();
+      // Only a real corruption if there was actually something to parse -- a missing/empty
+      // key is a normal first run, not data loss, and shouldn't alarm anyone.
+      if (raw) {
+        console.error('Store: stored data was corrupted and has been reset:', e);
+        if (this._onDataCorrupted) this._onDataCorrupted(this._dataKey());
+      }
+    }
     // backfill any settings keys added after a user's first install
     this.data.settings = Object.assign(defaultData().settings, this.data.settings || {});
     this.data.events = this.data.events || [];
@@ -126,18 +157,20 @@ const Store = {
     try {
       if (familyId) localStorage.setItem(FAMILY_ID_KEY, familyId);
       else localStorage.removeItem(FAMILY_ID_KEY);
-    } catch (e) {}
+    } catch (e) { this._reportStorageError('bindFamily:write family id', e); }
     this._loadFromDisk();
     const ok = this.persist();
     // Only reclaim the legacy key once its content is confirmed safely duplicated under the
     // new scoped key — if persist() failed, leave it untouched so the next load retries.
-    if (this._pendingLegacyMigration && ok) { try { localStorage.removeItem(DATA_KEY); } catch (e) {} }
+    if (this._pendingLegacyMigration && ok) {
+      try { localStorage.removeItem(DATA_KEY); }
+      catch (e) { this._reportStorageError('bindFamily:remove legacy blob', e); }
+    }
     this._pendingLegacyMigration = false;
   },
 
   onChange(fn) { this.listeners.push(fn); },
   _emit() { this.listeners.forEach(fn => fn()); },
-  _onPersistError: null, // set by app.js to surface a toast — see main.js/app.js init()
 
   persist() {
     try {
@@ -145,8 +178,7 @@ const Store = {
       this._emit();
       return true;
     } catch (e) {
-      console.error('Store.persist failed:', e);
-      if (this._onPersistError) this._onPersistError(e);
+      this._reportStorageError('persist:write ' + this._dataKey(), e);
       this._emit();
       return false;
     }
@@ -156,9 +188,11 @@ const Store = {
   local(key, val) {
     const k = LOCAL_PREFIX + key;
     if (val === undefined) {
-      try { return localStorage.getItem(k); } catch (e) { return null; }
+      try { return localStorage.getItem(k); }
+      catch (e) { this._reportStorageError('local:read ' + key, e); return null; }
     }
-    try { localStorage.setItem(k, val); } catch (e) {}
+    try { localStorage.setItem(k, val); }
+    catch (e) { this._reportStorageError('local:write ' + key, e); }
   },
 
   // Renaming "我是…" (e.g. fixing a typo) used to only affect *future* records — every
@@ -169,7 +203,8 @@ const Store = {
   setCaregiver(name) {
     const oldName = this.caregiver;
     this.caregiver = name;
-    try { localStorage.setItem(CAREGIVER_KEY, name); } catch (e) {}
+    try { localStorage.setItem(CAREGIVER_KEY, name); }
+    catch (e) { this._reportStorageError('setCaregiver:write', e); }
     if (oldName && oldName !== name) this._renameCaregiverInEvents(oldName, name);
     else this._emit();
   },

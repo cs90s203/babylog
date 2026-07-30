@@ -10,8 +10,8 @@ pre{white-space:pre-wrap;line-height:1.6}iframe{display:none}
 <body>
 <h3>兩台裝置同步模擬（A=cs90s203 / B=snowy5420）</h3>
 <pre id="out">執行中…</pre>
-<iframe id="devA" src="index.html?sim=A"></iframe>
-<iframe id="devB" src="index.html?sim=B"></iframe>
+<iframe id="devA"></iframe>
+<iframe id="devB"></iframe>
 <script>
 // Local two-device simulation of the real sync contract. Each iframe loads the actual app,
 // so each gets its OWN Store/Sync singletons — i.e. two independent "phones". A fake
@@ -157,9 +157,25 @@ async function run() {
 }
 
 let loaded = 0;
-['devA', 'devB'].forEach(id => document.getElementById(id).addEventListener('load', () => {
+['devA', 'devB'].forEach((id) => document.getElementById(id).addEventListener('load', () => {
   if (++loaded === 2) setTimeout(() => run().catch(e => { say('✗ 測試本身出錯: ' + e.message + '\n' + e.stack, 'fail'); window.__done = true; window.__fails = 99; }), 300);
 }));
+// Loaded via srcdoc with absolute script URLs, not a plain src="index.html" navigation — this
+// browser tooling was silently rewriting a plain relative/root-relative iframe src to resolve
+// against the TEST FILE's own directory (tools/) instead of the server root, landing on a
+// 404 and leaving Store/Sync undefined. srcdoc content has no navigable URL of its own
+// ("about:srcdoc"), which sidesteps that rewriting entirely; absolute http://…/js/*.js script
+// src attributes inside it are unambiguous regardless.
+const base = location.origin;
+const frameHtml = `<!DOCTYPE html><html><head></head><body><div id="root"></div>
+<script src="${base}/js/who-data.js"></scr` + `ipt>
+<script src="${base}/js/predict.js"></scr` + `ipt>
+<script src="${base}/js/store.js"></scr` + `ipt>
+<script src="${base}/js/csv.js"></scr` + `ipt>
+<script src="${base}/js/firebase-sync.js"></scr` + `ipt>
+</body></html>`;
+document.getElementById('devA').srcdoc = frameHtml;
+document.getElementById('devB').srcdoc = frameHtml;
 </script>
 </body>
 </html>

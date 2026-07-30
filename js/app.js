@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.33.11';
+const APP_VERSION = '2.33.12';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -80,16 +80,22 @@ const App = {
   _predLongFired: false,
 
   init() {
+    // Wired BEFORE Store.init() runs, on purpose — Store.init() itself does localStorage
+    // reads that can fail, and a failure there used to be invisible because this hook wasn't
+    // assigned yet at that point in the old init order.
+    // Surface local-storage read/write failures instead of letting them fail silently (see
+    // the data-loss incidents in CHANGELOG) — rare (storage quota exceeded, private-browsing
+    // restrictions) but should never again be invisible to the user.
+    Store._onPersistError = () => this.toast('⚠️', '本機儲存讀寫發生問題，部分設定或紀錄可能沒存到手機上（雲端仍會嘗試同步）');
+    // Different from a storage-access failure: the data WAS read, but wasn't valid JSON (a
+    // previous write got cut off partway, e.g. by the app closing or a quota error mid-save).
+    Store._onDataCorrupted = () => this.toast('⚠️', '本機資料似乎損壞，已重置——雲端會嘗試補回原本的紀錄');
     Store.init();
     this.state.theme = Store.local('theme') || 'auto';
     this.state.showWelcome = !Store.caregiver;
     this.state.nurse = this._loadNurse(); // resume a nursing session left running before reload/close
     Store.onChange(() => this.rerender());
     Sync.onChange(() => this.rerender());
-    // Surface local-storage write failures instead of letting them fail silently (see the
-    // data-loss incident in CHANGELOG) — this is rare (storage quota exceeded, private-
-    // browsing restrictions) but should never again be invisible to the user.
-    Store._onPersistError = () => this.toast('⚠️', '本機儲存空間可能已滿，這筆變更可能沒存到手機上（雲端仍會嘗試同步）');
     // Same reasoning for the other direction: a failed cloud push means this record exists
     // only on this phone. Silently logging that is what let a day's records go unbacked-up
     // (see CHANGELOG 2.33.4), so tell the user the moment it happens.
@@ -623,7 +629,10 @@ const App = {
   // the running number doesn't trigger a full app re-render every 500ms.
   NURSE_AUTO: 5400, NURSE_MINKEEP: 10,
   _nurseTick: null,
-  _loadNurse() { try { return JSON.parse(Store.local('nurse_session') || 'null'); } catch (e) { return null; } },
+  _loadNurse() {
+    try { return JSON.parse(Store.local('nurse_session') || 'null'); }
+    catch (e) { console.error('Stored nurse session was corrupted, discarding:', e); return null; }
+  },
   _saveNurse() { Store.local('nurse_session', this.state.nurse ? JSON.stringify(this.state.nurse) : ''); },
   nurseFmt(sec) { sec = Math.floor(sec); if (sec < 60) return sec + 's'; if (sec < 3600) return Math.floor(sec / 60) + 'm'; const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60); return h + 'h' + m + 'm'; },
   _nurseElapsed() { const s = this.state.nurse; return s ? s[s.active] + (Date.now() - s.since) / 1000 : 0; },
@@ -924,8 +933,13 @@ const App = {
   handleAvatarFile(file) {
     if (!file) return;
     const reader = new FileReader();
+    // Neither of these had an onerror before — a failed read or an undecodable image just
+    // left the avatar sheet sitting open with nothing happening, indistinguishable from the
+    // app being frozen.
+    reader.onerror = () => { console.error('Avatar file read failed:', reader.error); this.toast('⚠️', '照片讀取失敗，請換一張再試'); };
     reader.onload = (e) => {
       const img = new Image();
+      img.onerror = () => { console.error('Avatar image decode failed'); this.toast('⚠️', '照片格式無法辨識，請換一張再試'); };
       img.onload = () => {
         const SIZE = 160;
         const canvas = document.createElement('canvas');

@@ -63,6 +63,7 @@ const Sync = {
   lastRejectedEmail: "", // set when a sign-in is refused as unauthorized, so 診斷資訊 can show which address
   persistenceError: "", // set if enablePersistence()'s promise rejects — see init()
   _familyLabelCache: {}, // familyId -> {babyName, babyEmoji}, filled on demand by fetchFamilyLabel
+  _resyncToken: 0, // bumped by every _detachListeners() call; lets forceResync's async tail detect it's stale (see forceResync)
   listeners: [],
   onChange(fn) { this.listeners.push(fn); },
   _set(state, message) { this.state = state; this.message = message || ""; this.listeners.forEach((fn) => fn()); },
@@ -101,7 +102,8 @@ const Sync = {
           fbAuth.signOut();
           this.user = null;
           currentFamilyId = null; this.familyId = null; this.availableFamilyIds = [];
-          Store.bindFamily(null);
+          // Deliberately NOT calling Store.bindFamily(null) here — see the sign-out branch
+          // below for why.
           this._detachListeners();
           return;
         }
@@ -121,7 +123,16 @@ const Sync = {
           this._set("syncing");
         } else {
           currentFamilyId = null; this.familyId = null; this.availableFamilyIds = [];
-          Store.bindFamily(null);
+          // INCIDENT: this used to call Store.bindFamily(null), which deletes this device's
+          // persisted "last active family" (FAMILY_ID_KEY) on every sign-out. For an account
+          // that belongs to more than one family, the NEXT sign-in then has no preference to
+          // honor and silently falls back to familyIdsForEmail's first match — not
+          // necessarily the family the user was actually using (e.g. switches from a friend's
+          // baby back to "default" with no warning). Store simply keeps showing whichever
+          // family it was last bound to; local-only usage while signed out already works
+          // today (pushDoc/pushSettings both no-op when !isSignedIn()), so leaving the
+          // binding alone is a pure fix — no behavior change for the common single-family
+          // case, and it closes the multi-family one.
           this._detachListeners();
           this._set("idle");
         }
@@ -137,7 +148,12 @@ const Sync = {
   // account doesn't have access to, or the family it's already on.
   switchFamily(id) {
     if (!this.availableFamilyIds.includes(id) || id === currentFamilyId) return;
-    this._detachListeners();
+    this._detachListeners(); // also clears any stale cache-watchdog state (fromCacheOnly/networkLikelyBlocked) now — see _detachListeners
+    // A push failure banner (or a cache-only warning) recorded against the PREVIOUS family
+    // has nothing to do with this one's health — don't let it bleed into a freshly-switched,
+    // possibly-perfectly-healthy family.
+    this.pushFailures = 0;
+    this.lastPushError = "";
     currentFamilyId = id;
     this.familyId = id;
     Store.bindFamily(id);
@@ -160,14 +176,20 @@ const Sync = {
   forceResync() {
     if (!this.isSignedIn() || !fbDb) { location.reload(); return; }
     this._set("syncing");
-    this._detachListeners();
+    this._detachListeners(); // bumps _resyncToken, invalidating any earlier in-flight forceResync tail (see below)
+    const token = this._resyncToken;
     const rebuild = fbDb.disableNetwork()
       .then(() => fbDb.enableNetwork())
-      .then(() => { this._attachListeners(); });
+      .then(() => {
+        // If sign-out (or another switchFamily/forceResync) happened during this async gap,
+        // _detachListeners() has since bumped _resyncToken again — this attempt is stale and
+        // must NOT reattach listeners for whatever family/session happens to be current now.
+        if (token === this._resyncToken && this.isSignedIn()) this._attachListeners();
+      });
     if (rebuild && rebuild.catch) {
       rebuild.catch((err) => {
         console.error("forceResync network rebuild failed, falling back to reload:", err);
-        location.reload();
+        if (token === this._resyncToken) location.reload();
       });
     }
   },
@@ -188,7 +210,7 @@ const Sync = {
       const label = { babyName: d.babyName || "", babyEmoji: d.babyEmoji || "👶" };
       this._familyLabelCache[id] = label;
       return label;
-    }).catch(() => ({ babyName: "", babyEmoji: "👶" }));
+    }).catch((err) => { console.error("fetchFamilyLabel failed for", id, err); return { babyName: "", babyEmoji: "👶" }; });
   },
 
   signInWithGoogle() {
@@ -230,32 +252,61 @@ const Sync = {
   // updatedAt (every real mutation already gets pushed individually via _cloudPush at the
   // moment it happens), so this becomes a 0-write no-op almost every time it runs — it only
   // does meaningful work when there's an actual backlog to catch up on.
+  _pushAllLocalInFlight: false,
   _pushAllLocal() {
     if (!fbDb || !Store.data || !currentFamilyId) return;
+    // Avoids duplicate concurrent catch-up pushes from overlapping reconnects IN THIS TAB
+    // (e.g. a fast sign-in followed immediately by a manual forceResync). This does NOT
+    // protect against a second browser tab/window racing the same account — enablePersistence
+    // explicitly anticipates multiple tabs, so that's a real possibility, but the worst case is
+    // wasted-but-idempotent duplicate writes (merge:true, last-updatedAt-wins), not a
+    // correctness risk, and a full cross-tab mutex is disproportionate effort for that.
+    if (this._pushAllLocalInFlight) return;
     const watermarkKey = "catchup_push_wm_" + currentFamilyId;
     const watermark = Store.local(watermarkKey) || "";
-    let maxSeen = watermark;
-    const isNew = (doc) => {
-      const u = doc.updatedAt || "";
-      if (u <= watermark) return false;
-      if (u > maxSeen) maxSeen = u;
-      return true;
-    };
-    const batch = fbDb.batch();
-    let n = 0;
-    Store.data.events.forEach((ev) => { if (isNew(ev)) { batch.set(fbDb.doc(`${familyPath()}/events/${ev.id}`), ev, { merge: true }); n++; } });
-    Store.data.growth.forEach((g) => { if (isNew(g)) { batch.set(fbDb.doc(`${familyPath()}/growth/${g.id}`), g, { merge: true }); n++; } });
+    const isNew = (doc) => (doc.updatedAt || "") > watermark;
+    const docs = [];
+    Store.data.events.forEach((ev) => { if (isNew(ev)) docs.push({ kind: "events", id: ev.id, doc: ev }); });
+    Store.data.growth.forEach((g) => { if (isNew(g)) docs.push({ kind: "growth", id: g.id, doc: g }); });
     // Only push settings that have actually been touched (updatedAt set) — otherwise
     // switching to a family this device hasn't synced down yet would push the untouched
     // defaultData() scaffolding (blank babyName etc.) and clobber that family's real
     // settings before the listener below even gets a chance to pull them down.
-    if (Store.data.settings && Store.data.settings.updatedAt && isNew(Store.data.settings)) { batch.set(fbDb.doc(`${familyPath()}/settings/main`), Store.data.settings, { merge: true }); n++; }
-    if (n === 0) return;
+    if (Store.data.settings && Store.data.settings.updatedAt && isNew(Store.data.settings)) docs.push({ kind: "settings", id: "main", doc: Store.data.settings });
+    if (docs.length === 0) return;
+
+    // Cloud Firestore hard-caps one WriteBatch at 500 operations. This app already has ~1000
+    // events some days (see CHANGELOG 2.33.9's own measurement), so an unchunked batch would
+    // reject EVERY catch-up push outright — and since the watermark only advances on a
+    // successful commit, it could never make progress past that point. Split into chunks
+    // safely under the cap and commit sequentially, advancing the watermark after each chunk
+    // that succeeds so a LATER chunk failing doesn't roll back progress already confirmed.
+    const CHUNK_SIZE = 400;
+    const chunks = [];
+    for (let i = 0; i < docs.length; i += CHUNK_SIZE) chunks.push(docs.slice(i, i + CHUNK_SIZE));
+
+    this._pushAllLocalInFlight = true;
+    let chain = Promise.resolve();
+    chunks.forEach((chunk) => {
+      chain = chain.then(() => {
+        const batch = fbDb.batch();
+        let maxSeenInChunk = "";
+        chunk.forEach(({ kind, id, doc }) => {
+          batch.set(fbDb.doc(`${familyPath()}/${kind}/${id}`), doc, { merge: true });
+          if ((doc.updatedAt || "") > maxSeenInChunk) maxSeenInChunk = doc.updatedAt;
+        });
+        return batch.commit().then(() => {
+          this._notePushSuccess();
+          const soFar = Store.local(watermarkKey) || "";
+          if (maxSeenInChunk > soFar) Store.local(watermarkKey, maxSeenInChunk);
+        });
+      });
+    });
     // Same visibility rule as pushDoc: if this catch-up push fails, this device is holding
     // records the cloud has never seen — that must be surfaced, not just logged.
-    batch.commit()
-      .then(() => { this._notePushSuccess(); Store.local(watermarkKey, maxSeen); })
-      .catch((err) => this._notePushFailure(err));
+    chain
+      .catch((err) => this._notePushFailure(err))
+      .then(() => { this._pushAllLocalInFlight = false; });
   },
 
   // ---- real-time listeners: remote change -> merge into Store.data -> re-render ----
@@ -312,26 +363,53 @@ const Sync = {
   // automatic reload per browser session; if it's still stuck afterward, stop reloading and
   // say so plainly instead of looping silently.
   networkLikelyBlocked: false,
-  _reloadAttemptedKey: "bt_local_stuck_reload_tried",
+  // Scoped per family (not one global key) — a stuck episode on family A using up this
+  // session's one reload must not silently suppress a legitimate, genuinely-first-ever stuck
+  // episode on family B later in the same tab (this app supports one account belonging to
+  // more than one family).
+  _reloadAttemptedKeyFor(familyId) { return "bt_local_stuck_reload_tried_" + (familyId || "none"); },
   _armCacheWatchdog() {
     clearTimeout(this._cacheWatchdog);
+    const familyAtArmTime = currentFamilyId; // a switch/detach before this fires makes it stale — see the check below
     this._cacheWatchdog = setTimeout(() => {
-      if (!this.fromCacheOnly) return;
-      let alreadyTried = false;
-      try { alreadyTried = sessionStorage.getItem(this._reloadAttemptedKey) === "1"; } catch (e) {}
-      if (alreadyTried) {
-        console.error("Stuck on offline cache even after an automatic reload — likely a network block, not looping again.");
+      if (!this.fromCacheOnly || currentFamilyId !== familyAtArmTime) return;
+      const key = this._reloadAttemptedKeyFor(familyAtArmTime);
+      let sessionStorageOk = true, alreadyTried = false;
+      try { alreadyTried = sessionStorage.getItem(key) === "1"; } catch (e) { sessionStorageOk = false; }
+      if (alreadyTried || !sessionStorageOk) {
+        // Either this session already spent its one automatic reload for this family, or we
+        // can't reliably track that (sessionStorage throwing/unavailable — private browsing,
+        // a restricted webview). Reloading again in either case isn't provably bounded, so
+        // fail SAFE by not reloading rather than risking the original infinite-reload
+        // incident recurring silently in a browser where the guard itself doesn't work.
+        console.error(sessionStorageOk
+          ? "Stuck on offline cache even after an automatic reload — likely a network block, not looping again."
+          : "Stuck on offline cache and sessionStorage is unavailable — cannot safely auto-reload, reporting instead.");
         this.networkLikelyBlocked = true;
         this.listeners.forEach((fn) => fn());
         return;
       }
-      try { sessionStorage.setItem(this._reloadAttemptedKey, "1"); } catch (e) {}
+      try { sessionStorage.setItem(key, "1"); } catch (e) { /* best-effort; we're reloading regardless */ }
       console.error("Stuck on offline cache for 12s after reconnect attempt — forcing ONE reload.");
       if (this._onStuckOnCache) this._onStuckOnCache();
       setTimeout(() => location.reload(), 1500);
     }, 12000);
   },
   _onStuckOnCache: null, // set by app.js to toast before the auto-reload below fires
+  // Clears the pending watchdog and any cache-only/blocked flags — called from
+  // _detachListeners so EVERY exit from a listener generation (sign-out, switchFamily,
+  // forceResync, a fresh reattach) starts the next one with a clean slate instead of
+  // inheriting a stale timer or flag that has nothing to do with the new cycle's actual
+  // connection health.
+  _resetCacheWatchdogState() {
+    clearTimeout(this._cacheWatchdog);
+    this._cacheWatchdog = null;
+    if (this.fromCacheOnly || this.networkLikelyBlocked) {
+      this.fromCacheOnly = false;
+      this.networkLikelyBlocked = false;
+      this.listeners.forEach((fn) => fn());
+    }
+  },
   _noteSnapshotSource(snap) {
     const cached = !!(snap && snap.metadata && snap.metadata.fromCache);
     if (cached === this.fromCacheOnly) return;
@@ -340,12 +418,17 @@ const Sync = {
       this._armCacheWatchdog();
     } else {
       clearTimeout(this._cacheWatchdog);
-      if (this.networkLikelyBlocked) { this.networkLikelyBlocked = false; try { sessionStorage.removeItem(this._reloadAttemptedKey); } catch (e) {} }
+      if (this.networkLikelyBlocked) {
+        this.networkLikelyBlocked = false;
+        try { sessionStorage.removeItem(this._reloadAttemptedKeyFor(currentFamilyId)); } catch (e) {}
+      }
     }
     this.listeners.forEach((fn) => fn());
   },
   _detachListeners() {
     clearTimeout(this._retryTimer);
+    this._resyncToken++; // invalidate any in-flight forceResync tail from a previous cycle (see forceResync)
+    this._resetCacheWatchdogState(); // a stale watchdog/cache-only flag must not survive into whatever comes next
     if (unsubEvents) unsubEvents();
     if (unsubGrowth) unsubGrowth();
     if (unsubSettings) unsubSettings();
@@ -355,9 +438,16 @@ const Sync = {
   // right after sign-in) — retrying with backoff recovers from those on its own instead of
   // sitting in a permanent "fail" state that looks like data stopped syncing. Only gives up
   // (and asks for a manual tap-to-retry, see renderSyncPill) after several attempts.
+  _lastListenerErrorAt: 0,
   _onListenerError(err) {
     console.error("Firestore listener error:", err);
-    this._listenerRetryCount++;
+    // The events/growth/settings listeners all share one underlying connection, so a single
+    // disruption trips all three error callbacks in quick succession — without this window,
+    // that counted as 3 failures instead of 1, escalating the backoff (and reaching the
+    // give-up threshold) about 3x faster than the "after several attempts" comment intends.
+    const now = Date.now();
+    if (now - this._lastListenerErrorAt > 800) this._listenerRetryCount++;
+    this._lastListenerErrorAt = now;
     if (this._listenerRetryCount > 5) {
       this._set("fail", "同步發生錯誤（已自動重試多次）：" + err.message);
       return;
@@ -398,16 +488,27 @@ const Sync = {
     this.lastPushError = "";
     this.listeners.forEach((fn) => fn());
   },
+  // _pushAllLocal's watermark otherwise only advances from its OWN batch commits, never from
+  // these everyday individual pushes — so every record that's already been successfully
+  // synced this way would still look "new" (updatedAt > watermark) to the next catch-up push
+  // and get needlessly resent. Nudging the watermark forward here too means the catch-up
+  // backlog stays bounded to "since the last individual push", not "since the last catch-up".
+  _advanceWatermark(updatedAt) {
+    if (!updatedAt || !currentFamilyId) return;
+    const key = "catchup_push_wm_" + currentFamilyId;
+    const cur = Store.local(key) || "";
+    if (updatedAt > cur) Store.local(key, updatedAt);
+  },
   pushDoc(kind, doc) {
     if (!this.isSignedIn() || !fbDb) return;
     fbDb.doc(`${familyPath()}/${kind}/${doc.id}`).set(doc, { merge: true })
-      .then(() => this._notePushSuccess())
+      .then(() => { this._notePushSuccess(); this._advanceWatermark(doc.updatedAt); })
       .catch((err) => this._notePushFailure(err));
   },
   pushSettings(settings) {
     if (!this.isSignedIn() || !fbDb) return;
     fbDb.doc(`${familyPath()}/settings/main`).set(settings, { merge: true })
-      .then(() => this._notePushSuccess())
+      .then(() => { this._notePushSuccess(); this._advanceWatermark(settings.updatedAt); })
       .catch((err) => this._notePushFailure(err));
   },
 };
