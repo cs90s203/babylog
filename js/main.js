@@ -11,9 +11,11 @@ document.addEventListener('DOMContentLoaded', () => {
   // as a scroll/system gesture — spring the stats charts back so they don't freeze half-swiped.
   window.addEventListener('pointercancel', () => { App.stopHold(); App.cancelStatsSwipe(); });
 
-  // Pull-to-refresh: a plain page reload, not tied to sync (Firestore already syncs in
-  // real time on its own). This is here purely as a manual "start clean" convenience —
-  // e.g. while developing/testing, or if a device's listeners ever get stuck.
+  // Pull-to-refresh: forces the Firestore listeners to detach and re-attach (see
+  // Sync.forceResync), which re-fetches from the server without the cost of a full page
+  // reload — no re-downloading scripts, no re-initializing the Firebase SDK, no re-resolving
+  // auth. Firestore already syncs in real time on its own; this is purely a manual "start
+  // clean" convenience for when a device's listeners seem stuck.
   // The indicator lives outside #root (appended straight to body) since #root's
   // innerHTML gets replaced on every app re-render and would wipe a mid-gesture element.
   const pull = document.createElement('div');
@@ -44,7 +46,16 @@ document.addEventListener('DOMContentLoaded', () => {
       pull.textContent = '重新整理中…';
       pull.style.transform = 'translate(-50%, 10px)';
       pull.style.opacity = '1';
-      setTimeout(() => location.reload(), 150);
+      // No page reload to wipe the indicator for us anymore — hide it once the listeners
+      // report back "done", or after a timeout so a slow/stuck connection doesn't leave it
+      // stuck on screen forever.
+      let hidden = false;
+      const unsubscribe = () => { const i = Sync.listeners.indexOf(onSyncChange); if (i !== -1) Sync.listeners.splice(i, 1); };
+      const hide = () => { if (hidden) return; hidden = true; pull.style.opacity = '0'; unsubscribe(); };
+      const onSyncChange = () => { if (Sync.state === 'done' || Sync.state === 'fail') hide(); };
+      Sync.onChange(onSyncChange);
+      setTimeout(hide, 6000); // fallback in case the listeners never settle
+      setTimeout(() => Sync.forceResync(), 150);
     } else {
       pull.style.opacity = '0';
     }

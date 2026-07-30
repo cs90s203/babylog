@@ -443,6 +443,24 @@ function renderTodayTimeline(state) {
   nodes += `<div style="position:absolute;left:${axisX - 4}px;right:0;top:${ny}px;height:0.8px;background:var(--accent);z-index:3;"></div>
     <div style="position:absolute;left:0;top:${ny + 3}px;font-size:9px;font-weight:800;color:var(--accent);background:var(--card2);padding:1px 6px;border-radius:6px;z-index:3;">NOW ${hm(now)}</div>`;
 
+  // Predicted-next-feed line — always visible (unlike the accuracyById overlay above,
+  // which stays gated behind long-press), so a caregiver glancing at the timeline gets the
+  // same "when's the next feed" info the home card already shows, without leaving the
+  // screen. Skipped only when the prediction lands outside the visible window (rare — only
+  // happens with unusually long feed intervals). When it lands close to/on the NOW line
+  // (e.g. an overdue prediction), both still draw: NOW keeps the higher z-index so it wins
+  // the line itself, and the predicted label sits on the RIGHT edge (NOW's stays on the
+  // left) so the two texts never overlap even at the same height.
+  const pred = AppRef().predict();
+  if (pred.status === 'ok') {
+    const predPos = posOf(pred.nextTime);
+    if (predPos <= endH + 1e-9) {
+      const py = yOfAdjusted(predPos);
+      nodes += `<div style="position:absolute;left:${axisX - 4}px;right:0;top:${py}px;height:0.8px;background:#79C3F0;z-index:2;"></div>
+        <div style="position:absolute;right:0;top:${py + 3}px;font-size:9px;font-weight:800;color:#79C3F0;background:var(--card2);padding:1px 6px;border-radius:6px;z-index:2;">預計 ${hm(pred.nextTime)}</div>`;
+    }
+  }
+
   // compact=true abbreviates the label to just emoji+one-character (排便→便, 尿尿→尿) —
   // used when a chip is part of an overlapping stack (see below) and doesn't have room to
   // show its full label without the pile becoming unreadable.
@@ -1398,7 +1416,15 @@ function renderAuthCard() {
     const photo = u.photoURL
       ? `<img src="${u.photoURL}" referrerpolicy="no-referrer" style="width:40px;height:40px;border-radius:50%;flex-shrink:0;object-fit:cover;" />`
       : `<div style="width:40px;height:40px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:17px;flex-shrink:0;">${initial}</div>`;
-    const statusLabel = Sync.state === 'done' ? '✓ 即時同步中' : Sync.state === 'syncing' ? '連接中…' : (Sync.message || '—');
+    // A healthy-looking "✓ 即時同步中" while pushes are silently failing is exactly what let
+    // a batch of records live only on one phone until they were lost (see CHANGELOG 2.33.4),
+    // so a push failure overrides the status line no matter what the listeners report.
+    const statusLabel = Sync.pushFailures > 0
+      ? `⚠️ 有 ${Sync.pushFailures} 筆變更沒上傳成功（${Sync.lastPushError}）`
+      : Sync.networkLikelyBlocked ? '⚠️ 重新整理後仍連不上伺服器'
+      : Sync.fromCacheOnly && Sync.state === 'done' ? '⚠️ 目前讀的是離線快取，沒連上伺服器'
+      : Sync.state === 'done' ? '✓ 即時同步中' : Sync.state === 'syncing' ? '連接中…' : (Sync.message || '—');
+    const unhealthy = Sync.pushFailures > 0 || Sync.networkLikelyBlocked || (Sync.fromCacheOnly && Sync.state === 'done');
     return `
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
         ${photo}
@@ -1409,9 +1435,13 @@ function renderAuthCard() {
         <button onclick="A.signOut()" style="flex-shrink:0;font-size:12px;color:#E5573D;background:none;border:1.5px solid #E5573D;border-radius:10px;padding:6px 12px;">登出</button>
       </div>
       <div style="display:flex;align-items:center;gap:8px;background:var(--card2);border-radius:12px;padding:10px 12px;">
-        <div style="width:8px;height:8px;border-radius:50%;background:${Sync.state === 'done' ? '#5CB85C' : '#C8965A'};flex-shrink:0;"></div>
-        <p style="font-size:12px;color:var(--text2);">${esc(statusLabel)}</p>
-      </div>`;
+        <div style="width:8px;height:8px;border-radius:50%;background:${unhealthy ? '#E5573D' : Sync.state === 'done' ? '#5CB85C' : '#C8965A'};flex-shrink:0;"></div>
+        <p style="font-size:12px;color:${unhealthy ? '#E5573D' : 'var(--text2)'};">${esc(statusLabel)}</p>
+      </div>
+      ${Sync.pushFailures > 0 ? `<p style="font-size:10.5px;color:#D2654A;margin-top:8px;line-height:1.5;">這些紀錄目前<b>只存在這支手機</b>，還沒進雲端。請先確認網路，並在資料備份區「下載備份 JSON」留一份，再重新整理讓它重試。</p>` : ''}
+      ${Sync.networkLikelyBlocked ? `<p style="font-size:10.5px;color:#D2654A;margin-top:8px;line-height:1.5;">App 已經自動重新整理過一次，<b>仍然連不上伺服器</b>——這通常不是這支手機或這個 App 的問題，而是目前所在的網路本身擋住了連線（防火牆、VPN、特定 DNS、公共 Wi-Fi 限制等）。請試著切換 Wi-Fi／行動網路，或換一個網路環境再試。</p>`
+      : Sync.fromCacheOnly && Sync.state === 'done' ? `<button onclick="A.forceResync()" style="width:100%;margin-top:10px;background:var(--card2);border:1.5px solid #E5573D;border-radius:14px;padding:11px;font-size:13px;font-weight:700;color:#E5573D;">🔄 重新連線伺服器</button>
+      <p style="font-size:10.5px;color:#D2654A;margin-top:8px;line-height:1.5;">這支手機顯示的是本機快取，<b>看不到其他人的新紀錄</b>。點上面的按鈕重建連線。</p>` : ''}`;
   }
   const warn = Sync.state === 'unauthorized'
     ? `<div style="display:flex;gap:6px;align-items:flex-start;margin-bottom:12px;background:var(--card2);border-radius:12px;padding:10px 12px;"><span style="font-size:13px;">⚠️</span><p style="font-size:11px;color:#D2654A;line-height:1.5;">${esc(Sync.message)}，請改用授權過的 Google 帳號登入。</p></div>`
@@ -1425,6 +1455,66 @@ function renderAuthCard() {
 // Only functional once this signed-in account belongs to more than one family (see
 // Sync.availableFamilyIds in firebase-sync.js) — otherwise rendered disabled, per how a
 // single-baby account has nothing to switch to.
+// Read-only dump of what's ACTUALLY in this device's localStorage plus live sync state —
+// added after the v2.33.0 migration incident, where "資料不見了" could have meant the local
+// cache, the family binding, or Firestore itself, and there was no way to tell them apart
+// from the phone. Lists every bt_* key with its size/record counts rather than the data
+// itself, so a screenshot of this is safe to share and still pinpoints the layer at fault.
+function diagnosticsText() {
+  const lines = [];
+  lines.push('APP_VERSION: ' + (typeof APP_VERSION !== 'undefined' ? APP_VERSION : '?'));
+  lines.push('CACHE_VER: ' + (window.CACHE_VER || '(none)'));
+  lines.push('');
+  lines.push('--- 登入/家庭 ---');
+  lines.push('signedIn: ' + Sync.isSignedIn());
+  lines.push('email: ' + ((Sync.user && Sync.user.email) || '(未登入)'));
+  lines.push('syncState: ' + Sync.state + (Sync.message ? ' / ' + Sync.message : ''));
+  lines.push('familyId(Sync): ' + (Sync.familyId || '(null)'));
+  lines.push('availableFamilies: ' + JSON.stringify(Sync.availableFamilyIds || []));
+  lines.push('familyId(Store): ' + (Store._familyId || '(null)'));
+  lines.push('activeDataKey: ' + Store._dataKey());
+  lines.push('pushFailures: ' + Sync.pushFailures + (Sync.lastPushError ? ' / ' + Sync.lastPushError : ''));
+  lines.push('fromCacheOnly: ' + Sync.fromCacheOnly + (Sync.fromCacheOnly ? '  ← 沒連上伺服器！' : ''));
+  if (Sync.persistenceError) lines.push('persistenceError: ' + Sync.persistenceError);
+  lines.push('networkLikelyBlocked: ' + Sync.networkLikelyBlocked + (Sync.networkLikelyBlocked ? '  ← 重整過一次仍卡住，疑似網路本身擋住' : ''));
+  if (Sync.lastRejectedEmail) lines.push('被拒絕的帳號: ' + Sync.lastRejectedEmail + '  ← 不在白名單');
+  lines.push('');
+  lines.push('--- 目前載入的資料 ---');
+  lines.push('events(全部): ' + Store.data.events.length + ' / 未刪除: ' + Store.liveEvents().length);
+  // Today's records listed individually, INCLUDING tombstoned ones — this is what
+  // distinguishes "the record is gone entirely" (missing from the list) from "the record is
+  // still here but was wrongly marked deleted by a sync merge" (present, tagged 已刪除).
+  {
+    const tk = dayKey(new Date());
+    const today = Store.data.events
+      .filter((e) => dayKey(new Date(e.time)) === tk)
+      .sort((a, b) => new Date(a.time) - new Date(b.time));
+    lines.push('今天全部筆數(含已刪除): ' + today.length);
+    today.forEach((e) => {
+      const amt = e.type === 'milk' ? ' ' + ((e.breastMl || 0) + (e.formulaMl || 0)) + 'ml' : '';
+      lines.push('  ' + hm(new Date(e.time)) + ' ' + e.type + amt + ' by=' + (e.by || '?') + (e.deleted ? '  ← 已刪除' : '') + '  upd=' + String(e.updatedAt || '').slice(11, 19));
+    });
+  }
+  lines.push('growth(全部): ' + Store.data.growth.length);
+  lines.push('babyName: ' + (Store.data.settings.babyName || '(空)'));
+  lines.push('caregiver: ' + (Store.caregiver || '(空)'));
+  lines.push('');
+  lines.push('--- localStorage 實際內容 ---');
+  let keys = [];
+  try { keys = Object.keys(localStorage).filter((k) => k.indexOf('bt_') === 0).sort(); } catch (e) { lines.push('(無法讀取 localStorage: ' + e.message + ')'); }
+  keys.forEach((k) => {
+    let raw = '';
+    try { raw = localStorage.getItem(k) || ''; } catch (e) { raw = ''; }
+    if (k.indexOf('bt_data') === 0) {
+      let ev = '?', gr = '?', nm = '?';
+      try { const d = JSON.parse(raw); ev = (d.events || []).length; gr = (d.growth || []).length; nm = (d.settings && d.settings.babyName) || '(空)'; } catch (e) { ev = gr = nm = '(解析失敗)'; }
+      lines.push(k + ': ' + (raw.length / 1024).toFixed(1) + 'KB, events=' + ev + ', growth=' + gr + ', name=' + nm);
+    } else {
+      lines.push(k + ': ' + raw);
+    }
+  });
+  return lines.join('\n');
+}
 function renderFamilySwitchButton() {
   const multi = Sync.isSignedIn() && Sync.availableFamilyIds && Sync.availableFamilyIds.length > 1;
   if (!multi) return `<button disabled style="width:100%;margin-top:12px;background:transparent;border:1.5px solid var(--line);border-radius:14px;padding:12px;font-size:13px;font-weight:700;color:var(--text3);">🔀 切換寶寶（僅單一寶寶帳號無法使用）</button>`;
@@ -1514,6 +1604,16 @@ function renderSettings(state) {
       </div>
     </div>
     <div style="padding:18px 16px 0;">
+      ${sectionLabel('餵奶提醒')}
+      <div class="card" style="padding:16px;">
+        <p style="font-size:11px;color:var(--text2);font-weight:600;margin-bottom:5px;">偏好日曆 ID（選填）</p>
+        <input type="text" value="${esc(Store.local('gcal_id') || '')}" onchange="A.setGcalId(this.value)" placeholder="xxxx@group.calendar.google.com" style="font-size:13px;" />
+        <p style="font-size:10.5px;color:var(--text3);margin-top:8px;line-height:1.5;">填了之後，點首頁奶瓶 icon 產生的提醒會直接開啟這個日曆，不用每次自己選。
+          只存在<b style="color:var(--text2);">這支手機</b>，不會同步給其他照顧者——每個人可以各自填自己想固定用的日曆。
+          日曆 ID 在 Google Calendar 網頁版：該日曆設定和共用 → 日曆整合 → 日曆 ID。留空則維持每次自己選。</p>
+      </div>
+    </div>
+    <div style="padding:18px 16px 0;">
       ${sectionLabel('同步與帳號')}
       <div class="card" style="padding:16px;">
         ${renderAuthCard()}
@@ -1524,6 +1624,14 @@ function renderSettings(state) {
       <div class="card" style="padding:16px;">
         <p style="font-size:11px;color:var(--text3);margin-bottom:12px;line-height:1.5;">下載一份完整資料快照（喝奶/排便/尿尿/成長紀錄），存到雲端硬碟或信箱給自己，作為額外保險。</p>
         <button onclick="A.doBackup()" style="width:100%;background:var(--card2);border:1.5px solid var(--inpBorder);border-radius:16px;padding:13px;font-size:14px;font-weight:700;color:var(--text);">💾 下載備份 JSON</button>
+      </div>
+    </div>
+    <div style="padding:18px 16px 0;">
+      ${sectionLabel('診斷資訊')}
+      <div class="card" style="padding:16px;">
+        <p style="font-size:11px;color:var(--text3);margin-bottom:12px;line-height:1.5;">遇到「資料消失」之類的問題時，點這裡把這支手機目前的實際儲存狀態列出來，截圖回報。</p>
+        <button onclick="A.toggleDiagnostics()" style="width:100%;background:var(--card2);border:1.5px solid var(--inpBorder);border-radius:16px;padding:13px;font-size:14px;font-weight:700;color:var(--text);">🩺 ${state.showDiagnostics ? '隱藏' : '顯示'}診斷資訊</button>
+        ${state.showDiagnostics ? `<pre style="margin-top:12px;padding:12px;background:var(--card2);border-radius:12px;font-size:10px;line-height:1.6;color:var(--text2);white-space:pre-wrap;word-break:break-all;overflow-x:auto;">${esc(diagnosticsText())}</pre>` : ''}
       </div>
     </div>
     <div style="padding:18px 16px 0;">

@@ -17,12 +17,25 @@
 const DATA_KEY = 'bt_data';
 const CAREGIVER_KEY = 'bt_caregiver';
 const LOCAL_PREFIX = 'bt_local_';
-const LEGACY_MIGRATED_KEY = LOCAL_PREFIX + 'legacy_migrated';
 const FAMILY_ID_KEY = LOCAL_PREFIX + 'family_id';
+const LEGACY_OWNER_KEY = LOCAL_PREFIX + 'legacy_owner'; // which family the pre-multi-family bt_data belongs to
 
 function uid() {
   if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+}
+
+// Used by _loadFromDisk's legacy-migration fallback to decide whether a data blob is
+// "real" or just an empty shell — see the incident note there.
+function isEmptyDataBlob(raw) {
+  if (!raw) return true;
+  try {
+    const d = JSON.parse(raw);
+    const hasEvents = Array.isArray(d.events) && d.events.length > 0;
+    const hasGrowth = Array.isArray(d.growth) && d.growth.length > 0;
+    const hasBabyName = !!(d.settings && d.settings.babyName);
+    return !hasEvents && !hasGrowth && !hasBabyName;
+  } catch (e) { return true; }
 }
 
 function defaultData() {
@@ -65,22 +78,37 @@ const Store = {
   // the app's original behavior exactly — the per-family split only kicks in once bindFamily
   // has actually been called with a real family id (see below).
   _dataKey() { return this._familyId ? `${DATA_KEY}::${this._familyId}` : DATA_KEY; },
+  // INCIDENT (see CHANGELOG): an earlier version of this migration marked itself "done" via
+  // a separate flag as soon as it *read* the legacy blob, before confirming the scoped-key
+  // write actually succeeded. If that write failed (e.g. localStorage quota exceeded — for a
+  // moment during migration both the legacy AND scoped copies exist at once, roughly
+  // doubling this app's storage footprint), the flag was already set, so every future load
+  // trusted the now-permanently-empty scoped key and never looked at legacy again — the
+  // real data was still sitting right there in localStorage, just never read. Fixed by (1)
+  // judging "already migrated" from the scoped key's actual CONTENT instead of a separate
+  // flag that can fall out of sync with reality, and self-healing any device already stuck
+  // in that broken state, and (2) only deleting the legacy copy once the new copy is
+  // confirmed persisted (see bindFamily below), never before.
+  // The legacy blob predates multi-family and therefore belongs to exactly ONE family: the
+  // first one this device ever bound to. Adopting it for any other family would copy one
+  // baby's history into a different baby's storage — so record the owner on first adoption
+  // and refuse to hand it to anyone else afterwards.
+  _pendingLegacyMigration: false,
   _loadFromDisk() {
     let raw = null;
     try { raw = localStorage.getItem(this._dataKey()); } catch (e) {}
-    if (!raw && this._familyId) {
-      // No cache yet for this family on this device. If this is the very first family this
-      // device has ever bound to, adopt the pre-existing global bt_data blob instead of
-      // starting empty — that's what makes this change a no-op for every existing
-      // single-family install (their history just gets renamed into a scoped key the first
-      // time they sign in post-update). Any OTHER family this account later switches to
-      // starts genuinely empty and re-syncs down from Firestore, same as a brand-new device
-      // signing into an established family always has.
-      let migrated = false;
-      try { migrated = localStorage.getItem(LEGACY_MIGRATED_KEY) === '1'; } catch (e) {}
-      if (!migrated) {
-        try { raw = localStorage.getItem(DATA_KEY); } catch (e) {}
-        try { localStorage.setItem(LEGACY_MIGRATED_KEY, '1'); } catch (e) {}
+    this._pendingLegacyMigration = false;
+    if (this._familyId && isEmptyDataBlob(raw)) {
+      let owner = null;
+      try { owner = localStorage.getItem(LEGACY_OWNER_KEY); } catch (e) {}
+      if (!owner || owner === this._familyId) {
+        let legacyRaw = null;
+        try { legacyRaw = localStorage.getItem(DATA_KEY); } catch (e) {}
+        if (!isEmptyDataBlob(legacyRaw)) {
+          raw = legacyRaw;
+          this._pendingLegacyMigration = true;
+          if (!owner) { try { localStorage.setItem(LEGACY_OWNER_KEY, this._familyId); } catch (e) {} }
+        }
       }
     }
     try { this.data = raw ? JSON.parse(raw) : defaultData(); } catch (e) { this.data = defaultData(); }
@@ -100,15 +128,28 @@ const Store = {
       else localStorage.removeItem(FAMILY_ID_KEY);
     } catch (e) {}
     this._loadFromDisk();
-    this.persist();
+    const ok = this.persist();
+    // Only reclaim the legacy key once its content is confirmed safely duplicated under the
+    // new scoped key — if persist() failed, leave it untouched so the next load retries.
+    if (this._pendingLegacyMigration && ok) { try { localStorage.removeItem(DATA_KEY); } catch (e) {} }
+    this._pendingLegacyMigration = false;
   },
 
   onChange(fn) { this.listeners.push(fn); },
   _emit() { this.listeners.forEach(fn => fn()); },
+  _onPersistError: null, // set by app.js to surface a toast — see main.js/app.js init()
 
   persist() {
-    try { localStorage.setItem(this._dataKey(), JSON.stringify(this.data)); } catch (e) {}
-    this._emit();
+    try {
+      localStorage.setItem(this._dataKey(), JSON.stringify(this.data));
+      this._emit();
+      return true;
+    } catch (e) {
+      console.error('Store.persist failed:', e);
+      if (this._onPersistError) this._onPersistError(e);
+      this._emit();
+      return false;
+    }
   },
 
   // ---- local-only prefs ----
