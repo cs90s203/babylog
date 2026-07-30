@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.33.9';
+const APP_VERSION = '2.33.10';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -406,11 +406,20 @@ const App = {
   },
 
   // Tap-to-edit: tapping the h/m stepper number or an ml amount swaps it for a numeric
-  // input in place (see numEditInput/timeStepper/mlValueSpan in views.js).
+  // input in place (see numEditInput/timeStepper/mlValueSpan in views.js), which then
+  // focuses + selects itself (see render() in views.js). That focus() call MUST land
+  // synchronously inside this tap's own event handler — iOS Safari only reliably raises
+  // the keyboard for a focus() that's still part of the original user-gesture call stack.
+  // rerender()'s requestAnimationFrame batching (added for the "app feels janky" fix)
+  // defers render() by a frame, which breaks that: the input shows up already
+  // text-selected (the native selection callout) but without the keyboard, needing a
+  // second, genuinely-synchronous tap to actually open it. Bypass the batching here, same
+  // as openCelebration does for its own synchronous-DOM need.
   startNumEdit(field) {
     const s = this.state;
     const cur = field === 'h' ? s.rt.h : field === 'm' ? s.rt.m : field === 'milkBreast' ? s.milkBreast : s.milkFormula;
-    this.set({ numEdit: { field, value: String(cur) } });
+    Object.assign(this.state, { numEdit: { field, value: String(cur) } });
+    this.rerenderNow();
   },
   cancelNumEdit() { this.set({ numEdit: null }); },
   commitNumEdit(raw) {
