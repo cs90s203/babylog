@@ -19,7 +19,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // The indicator lives outside #root (appended straight to body) since #root's
   // innerHTML gets replaced on every app re-render and would wipe a mid-gesture element.
   const pull = document.createElement('div');
-  pull.style.cssText = 'position:fixed;top:0;left:50%;transform:translate(-50%,-40px);z-index:200;background:var(--card);color:var(--text2);font-size:12px;font-weight:700;padding:8px 16px;border-radius:0 0 14px 14px;box-shadow:0 4px 12px var(--shadow);opacity:0;transition:opacity .15s;pointer-events:none;';
+  pull.style.cssText = 'position:fixed;top:0;left:50%;transform:translate(-50%,-40px);z-index:200;background:var(--card);color:var(--text2);font-size:12px;font-weight:700;padding:8px 16px;border-radius:14px;box-shadow:0 4px 12px var(--shadow);opacity:0;transition:opacity .15s;pointer-events:none;';
   pull.textContent = '↓ 放開重新整理';
   document.body.appendChild(pull);
 
