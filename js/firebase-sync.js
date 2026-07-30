@@ -61,6 +61,7 @@ const Sync = {
   familyId: null, // mirrors currentFamilyId, so views.js/app.js don't need module-internal access
   availableFamilyIds: [], // every family this signed-in email belongs to (usually just one)
   lastRejectedEmail: "", // set when a sign-in is refused as unauthorized, so 診斷資訊 can show which address
+  persistenceError: "", // set if enablePersistence()'s promise rejects — see init()
   _familyLabelCache: {}, // familyId -> {babyName, babyEmoji}, filled on demand by fetchFamilyLabel
   listeners: [],
   onChange(fn) { this.listeners.push(fn); },
@@ -74,7 +75,15 @@ const Sync = {
       if (!firebase.apps || !firebase.apps.length) firebase.initializeApp(firebaseConfig);
       fbAuth = firebase.auth();
       fbDb = firebase.firestore();
-      try { fbDb.enablePersistence({ synchronizeTabs: true }); } catch (e) { /* multiple tabs etc. — non-fatal, just no offline cache */ }
+      // enablePersistence() returns a PROMISE — a bare try/catch around the call only ever
+      // catches a synchronous throw, which is not how it reports "multiple tabs open" or
+      // "unsupported browser": those arrive as a REJECTED promise. An unhandled rejection
+      // here was completely invisible (no console entry a user could ever see, nothing in
+      // diagnostics) — recorded so it can actually be seen instead of silently vanishing.
+      fbDb.enablePersistence({ synchronizeTabs: true }).catch((e) => {
+        Sync.persistenceError = (e && (e.code || e.message)) || String(e);
+        console.error("enablePersistence failed:", e);
+      });
 
       fbAuth.getRedirectResult().catch((err) => {
         if (err.code !== "auth/no-auth-event") console.warn("getRedirectResult:", err.code);
@@ -260,10 +269,32 @@ const Sync = {
   // only signal that distinguishes the two, so track it and let the UI say so rather than
   // claiming live sync.
   fromCacheOnly: false,
+  _cacheWatchdog: null,
+  // A server connection that's actually just slow clears fromCacheOnly within a couple of
+  // seconds on its own once the round-trip completes — that's normal and expected, not
+  // escalated. But if it STAYS cache-only, neither the automatic retry backoff
+  // (_onListenerError) nor a manual detach/reattach (forceResync) can help, because neither
+  // one touches whatever's actually wedged (observed on a real device that stayed
+  // cache-only across multiple manual reconnect attempts and an app-version update — i.e.
+  // something below the onSnapshot layer, most likely the IndexedDB persistence connection
+  // itself, not the listener subscription). A full page reload is the one thing guaranteed
+  // to rebuild that from zero, so escalate to it automatically rather than leaving the user
+  // stuck on a button that looks like it should work but doesn't.
+  _armCacheWatchdog() {
+    clearTimeout(this._cacheWatchdog);
+    this._cacheWatchdog = setTimeout(() => {
+      if (!this.fromCacheOnly) return;
+      console.error("Stuck on offline cache for 12s after reconnect attempt — forcing a full reload.");
+      if (this._onStuckOnCache) this._onStuckOnCache();
+      setTimeout(() => location.reload(), 1500);
+    }, 12000);
+  },
+  _onStuckOnCache: null, // set by app.js to toast before the auto-reload below fires
   _noteSnapshotSource(snap) {
     const cached = !!(snap && snap.metadata && snap.metadata.fromCache);
     if (cached === this.fromCacheOnly) return;
     this.fromCacheOnly = cached;
+    if (cached) this._armCacheWatchdog(); else clearTimeout(this._cacheWatchdog);
     this.listeners.forEach((fn) => fn());
   },
   _detachListeners() {
