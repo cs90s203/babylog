@@ -280,11 +280,29 @@ const Sync = {
   // itself, not the listener subscription). A full page reload is the one thing guaranteed
   // to rebuild that from zero, so escalate to it automatically rather than leaving the user
   // stuck on a button that looks like it should work but doesn't.
+  // INCIDENT (see CHANGELOG 2.33.8): the auto-reload below fixes a wedged LOCAL persistence
+  // layer, but if what's actually wrong is the network itself (a firewall/VPN/carrier
+  // blocking Firestore's connection outright), a reload reruns straight into the same
+  // stuck state — and did, every ~12s, forever. From the user's side that's indistinguishable
+  // from "nothing happened", because nothing meaningful did. sessionStorage caps this to ONE
+  // automatic reload per browser session; if it's still stuck afterward, stop reloading and
+  // say so plainly instead of looping silently.
+  networkLikelyBlocked: false,
+  _reloadAttemptedKey: "bt_local_stuck_reload_tried",
   _armCacheWatchdog() {
     clearTimeout(this._cacheWatchdog);
     this._cacheWatchdog = setTimeout(() => {
       if (!this.fromCacheOnly) return;
-      console.error("Stuck on offline cache for 12s after reconnect attempt — forcing a full reload.");
+      let alreadyTried = false;
+      try { alreadyTried = sessionStorage.getItem(this._reloadAttemptedKey) === "1"; } catch (e) {}
+      if (alreadyTried) {
+        console.error("Stuck on offline cache even after an automatic reload — likely a network block, not looping again.");
+        this.networkLikelyBlocked = true;
+        this.listeners.forEach((fn) => fn());
+        return;
+      }
+      try { sessionStorage.setItem(this._reloadAttemptedKey, "1"); } catch (e) {}
+      console.error("Stuck on offline cache for 12s after reconnect attempt — forcing ONE reload.");
       if (this._onStuckOnCache) this._onStuckOnCache();
       setTimeout(() => location.reload(), 1500);
     }, 12000);
@@ -294,7 +312,12 @@ const Sync = {
     const cached = !!(snap && snap.metadata && snap.metadata.fromCache);
     if (cached === this.fromCacheOnly) return;
     this.fromCacheOnly = cached;
-    if (cached) this._armCacheWatchdog(); else clearTimeout(this._cacheWatchdog);
+    if (cached) {
+      this._armCacheWatchdog();
+    } else {
+      clearTimeout(this._cacheWatchdog);
+      if (this.networkLikelyBlocked) { this.networkLikelyBlocked = false; try { sessionStorage.removeItem(this._reloadAttemptedKey); } catch (e) {} }
+    }
     this.listeners.forEach((fn) => fn());
   },
   _detachListeners() {

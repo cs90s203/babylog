@@ -1421,9 +1421,10 @@ function renderAuthCard() {
     // so a push failure overrides the status line no matter what the listeners report.
     const statusLabel = Sync.pushFailures > 0
       ? `⚠️ 有 ${Sync.pushFailures} 筆變更沒上傳成功（${Sync.lastPushError}）`
+      : Sync.networkLikelyBlocked ? '⚠️ 重新整理後仍連不上伺服器'
       : Sync.fromCacheOnly && Sync.state === 'done' ? '⚠️ 目前讀的是離線快取，沒連上伺服器'
       : Sync.state === 'done' ? '✓ 即時同步中' : Sync.state === 'syncing' ? '連接中…' : (Sync.message || '—');
-    const unhealthy = Sync.pushFailures > 0 || (Sync.fromCacheOnly && Sync.state === 'done');
+    const unhealthy = Sync.pushFailures > 0 || Sync.networkLikelyBlocked || (Sync.fromCacheOnly && Sync.state === 'done');
     return `
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
         ${photo}
@@ -1438,7 +1439,8 @@ function renderAuthCard() {
         <p style="font-size:12px;color:${unhealthy ? '#E5573D' : 'var(--text2)'};">${esc(statusLabel)}</p>
       </div>
       ${Sync.pushFailures > 0 ? `<p style="font-size:10.5px;color:#D2654A;margin-top:8px;line-height:1.5;">這些紀錄目前<b>只存在這支手機</b>，還沒進雲端。請先確認網路，並在資料備份區「下載備份 JSON」留一份，再重新整理讓它重試。</p>` : ''}
-      ${Sync.fromCacheOnly && Sync.state === 'done' ? `<button onclick="A.forceResync()" style="width:100%;margin-top:10px;background:var(--card2);border:1.5px solid #E5573D;border-radius:14px;padding:11px;font-size:13px;font-weight:700;color:#E5573D;">🔄 重新連線伺服器</button>
+      ${Sync.networkLikelyBlocked ? `<p style="font-size:10.5px;color:#D2654A;margin-top:8px;line-height:1.5;">App 已經自動重新整理過一次，<b>仍然連不上伺服器</b>——這通常不是這支手機或這個 App 的問題，而是目前所在的網路本身擋住了連線（防火牆、VPN、特定 DNS、公共 Wi-Fi 限制等）。請試著切換 Wi-Fi／行動網路，或換一個網路環境再試。</p>`
+      : Sync.fromCacheOnly && Sync.state === 'done' ? `<button onclick="A.forceResync()" style="width:100%;margin-top:10px;background:var(--card2);border:1.5px solid #E5573D;border-radius:14px;padding:11px;font-size:13px;font-weight:700;color:#E5573D;">🔄 重新連線伺服器</button>
       <p style="font-size:10.5px;color:#D2654A;margin-top:8px;line-height:1.5;">這支手機顯示的是本機快取，<b>看不到其他人的新紀錄</b>。點上面的按鈕重建連線。</p>` : ''}`;
   }
   const warn = Sync.state === 'unauthorized'
@@ -1474,6 +1476,7 @@ function diagnosticsText() {
   lines.push('pushFailures: ' + Sync.pushFailures + (Sync.lastPushError ? ' / ' + Sync.lastPushError : ''));
   lines.push('fromCacheOnly: ' + Sync.fromCacheOnly + (Sync.fromCacheOnly ? '  ← 沒連上伺服器！' : ''));
   if (Sync.persistenceError) lines.push('persistenceError: ' + Sync.persistenceError);
+  lines.push('networkLikelyBlocked: ' + Sync.networkLikelyBlocked + (Sync.networkLikelyBlocked ? '  ← 重整過一次仍卡住，疑似網路本身擋住' : ''));
   if (Sync.lastRejectedEmail) lines.push('被拒絕的帳號: ' + Sync.lastRejectedEmail + '  ← 不在白名單');
   lines.push('');
   lines.push('--- 目前載入的資料 ---');
