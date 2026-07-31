@@ -262,6 +262,7 @@ const Sync = {
     // wasted-but-idempotent duplicate writes (merge:true, last-updatedAt-wins), not a
     // correctness risk, and a full cross-tab mutex is disproportionate effort for that.
     if (this._pushAllLocalInFlight) return;
+    if (this._inQuotaCooldown()) return; // already known-doomed until the cooldown clears — see _noteQuotaExhausted
     const watermarkKey = "catchup_push_wm_" + currentFamilyId;
     const watermark = Store.local(watermarkKey) || "";
     const isNew = (doc) => (doc.updatedAt || "") > watermark;
@@ -473,10 +474,32 @@ const Sync = {
   pushFailures: 0,
   lastPushError: "",
   _onPushError: null, // set by app.js to raise a toast the first time this happens
+  // INCIDENT (2026-07-31): the Spark plan's free daily write quota is a once-a-day budget, not
+  // a retry-friendly rate limit — once it's exhausted, EVERY write (batched or individual)
+  // fails with "resource-exhausted" until the next daily reset. Before this, a failed commit
+  // just meant the watermark didn't advance, so the very next refresh re-attempted the exact
+  // same backlog chunk, failed the exact same way, and did that again on every single
+  // subsequent refresh — measured at ~400+ wasted write attempts per refresh, repeating for as
+  // long as the app kept getting reloaded, which is indistinguishable from (and was mistaken
+  // for) a fresh quota-exhausting bug each time. A quota-specific failure now arms a cooldown
+  // so the app stops hammering a door it already knows is locked, instead of just retrying
+  // faster/harder.
+  _quotaCooldownKeyFor(familyId) { return "quota_cooldown_" + (familyId || "none"); },
+  _inQuotaCooldown() {
+    if (!currentFamilyId) return false;
+    const until = Number(Store.local(this._quotaCooldownKeyFor(currentFamilyId)) || 0);
+    return until > Date.now();
+  },
+  _noteQuotaExhausted() {
+    if (!currentFamilyId) return;
+    const COOLDOWN_MS = 4 * 60 * 60 * 1000; // a few hours is plenty to stop refresh-triggered thrashing without needing to predict the exact Pacific-time daily reset moment
+    Store.local(this._quotaCooldownKeyFor(currentFamilyId), String(Date.now() + COOLDOWN_MS));
+  },
   _notePushFailure(err) {
     this.pushFailures++;
     this.lastPushError = (err && (err.code || err.message)) || String(err);
     console.error("cloud push failed:", err);
+    if (err && err.code === "resource-exhausted") this._noteQuotaExhausted();
     if (this.pushFailures === 1 && this._onPushError) this._onPushError(err);
     this.listeners.forEach((fn) => fn()); // refresh the sync pill so the warning shows up
   },
@@ -501,12 +524,14 @@ const Sync = {
   },
   pushDoc(kind, doc) {
     if (!this.isSignedIn() || !fbDb) return;
+    if (this._inQuotaCooldown()) return; // a doomed attempt right now would just count as another failure; the record stays local and goes out once the cooldown clears (via the watermark catch-up)
     fbDb.doc(`${familyPath()}/${kind}/${doc.id}`).set(doc, { merge: true })
       .then(() => { this._notePushSuccess(); this._advanceWatermark(doc.updatedAt); })
       .catch((err) => this._notePushFailure(err));
   },
   pushSettings(settings) {
     if (!this.isSignedIn() || !fbDb) return;
+    if (this._inQuotaCooldown()) return;
     fbDb.doc(`${familyPath()}/settings/main`).set(settings, { merge: true })
       .then(() => { this._notePushSuccess(); this._advanceWatermark(settings.updatedAt); })
       .catch((err) => this._notePushFailure(err));
