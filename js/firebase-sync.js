@@ -89,6 +89,17 @@ const Sync = {
       if (!firebase.apps || !firebase.apps.length) firebase.initializeApp(firebaseConfig);
       fbAuth = firebase.auth();
       fbDb = firebase.firestore();
+      // INCIDENT (2026-08-02): confirmed via direct REST test on the stuck phone — plain HTTPS
+      // requests to firestore.googleapis.com got a clean response, but the SDK's real-time
+      // listeners stayed on "offline cache" forever. Plain REST and the SDK's default
+      // real-time transport (WebChannel, a long-lived streaming connection) are different
+      // enough that some networks — certain corporate/mobile-carrier proxies and firewalls in
+      // particular — pass ordinary HTTPS through fine while quietly breaking the streaming
+      // connection specifically. autoDetectLongPolling makes the SDK notice when that's
+      // happening and fall back to plain HTTP long-polling (which behaves enough like normal
+      // request/response traffic to get through those same middleboxes), with no effect at all
+      // on networks where streaming already works. Must be set before any other Firestore call.
+      fbDb.settings({ experimentalAutoDetectLongPolling: true, merge: true });
       // enablePersistence() returns a PROMISE — a bare try/catch around the call only ever
       // catches a synchronous throw, which is not how it reports "multiple tabs open" or
       // "unsupported browser": those arrive as a REJECTED promise. An unhandled rejection
