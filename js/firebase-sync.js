@@ -49,19 +49,6 @@ function familyIdsForEmail(email) {
 let currentFamilyId = null; // set once signed in, see familyIdsForEmail()
 function familyPath() { return `families/${currentFamilyId}`; }
 
-// INCIDENT (2026-08-02): the real-time listeners used to watch the ENTIRE events/growth
-// collections with no filter, so every reconnect (refresh, background wake, pull-to-refresh)
-// re-read the full history — cost that only ever grows as more records accumulate, forever.
-// Almost nobody edits a two-month-old feeding log; recent records are what actually needs to
-// be *live*. So the listeners below only watch the last SYNC_WINDOW_DAYS by `updatedAt` —
-// touching an old record bumps its updatedAt and pulls it back into the live window
-// automatically, so cross-device real-time sync still works for anything anyone actually
-// edits, it just doesn't pay to keep watching untouched history. A brand-new device (empty
-// local cache) still needs the full history at least once, so it gets ONE plain (non-live)
-// paginated read on first bind — see _fetchFullHistoryOnce.
-const SYNC_WINDOW_DAYS = 30;
-function syncWindowCutoff() { return new Date(Date.now() - SYNC_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString(); }
-
 let fbApp = null, fbAuth = null, fbDb = null;
 let firebaseInitError = null;
 let authStateKnown = false;
@@ -350,12 +337,11 @@ const Sync = {
       }
     };
 
-    const cutoff = syncWindowCutoff();
-    unsubEvents = fbDb.collection(`${familyPath()}/events`).where("updatedAt", ">=", cutoff).onSnapshot(
+    unsubEvents = fbDb.collection(`${familyPath()}/events`).onSnapshot(
       (snap) => { this._noteSnapshotSource(snap); Store.mergeRemoteBatch("events", snap.docChanges().map((c) => ({ id: c.doc.id, ...c.doc.data() }))); settled(); },
       (err) => this._onListenerError(err)
     );
-    unsubGrowth = fbDb.collection(`${familyPath()}/growth`).where("updatedAt", ">=", cutoff).onSnapshot(
+    unsubGrowth = fbDb.collection(`${familyPath()}/growth`).onSnapshot(
       (snap) => { this._noteSnapshotSource(snap); Store.mergeRemoteBatch("growth", snap.docChanges().map((c) => ({ id: c.doc.id, ...c.doc.data() }))); settled(); },
       (err) => this._onListenerError(err)
     );
@@ -363,40 +349,6 @@ const Sync = {
       (doc) => { this._noteSnapshotSource(doc); if (doc.exists) Store.mergeRemoteSettings(doc.data()); settled(); },
       (err) => this._onListenerError(err)
     );
-    this._fetchFullHistoryOnce();
-  },
-  // One-time (per device, per family) full historical read — the windowed listeners above
-  // only ever see the last SYNC_WINDOW_DAYS, so a device that doesn't already have this
-  // family's older history locally needs to pull it at least once via a plain paginated get()
-  // (not a live listener — old records don't need to stay watched, they just need to be here).
-  _fullHistoryFetchInFlight: false,
-  _fullSyncDoneKeyFor(familyId) { return "full_sync_done_" + (familyId || "none"); },
-  _fetchFullHistoryOnce() {
-    if (!currentFamilyId || !fbDb || this._fullHistoryFetchInFlight) return;
-    const key = this._fullSyncDoneKeyFor(currentFamilyId);
-    if (Store.local(key) === "1") return;
-    // Grandfather clause: a device that already has local event history for this family got
-    // it all through the old unbounded listener before windowing shipped — recording it as
-    // "already done" avoids a wasted one-time re-read of everything it already has (and avoids
-    // every existing device doing this all at once on the day this ships).
-    if (Store.data.events && Store.data.events.length > 0) { Store.local(key, "1"); return; }
-    this._fullHistoryFetchInFlight = true;
-    const PAGE_SIZE = 500;
-    const fetchKind = (kind) => {
-      const pullPage = (cursor) => {
-        let q = fbDb.collection(`${familyPath()}/${kind}`).orderBy("updatedAt").limit(PAGE_SIZE);
-        if (cursor) q = q.startAfter(cursor);
-        return q.get().then((snap) => {
-          if (!snap.empty) Store.mergeRemoteBatch(kind, snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-          if (snap.size === PAGE_SIZE) return pullPage(snap.docs[snap.docs.length - 1]);
-        });
-      };
-      return pullPage(null);
-    };
-    Promise.all([fetchKind("events"), fetchKind("growth")])
-      .then(() => { Store.local(key, "1"); })
-      .catch((err) => { console.error("one-time full-history sync failed:", err); })
-      .then(() => { this._fullHistoryFetchInFlight = false; });
   },
   // With enablePersistence on, a wedged server connection doesn't raise an error — onSnapshot
   // just keeps serving the local IndexedDB cache, so the app looked perfectly healthy while
