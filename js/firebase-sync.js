@@ -336,12 +336,19 @@ const Sync = {
         Store.local("last_sync", this._nowLabel());
       }
     };
+    // Per-listener "have I already delivered my own first snapshot" tracking — deliberately
+    // NOT keyed off this.state === "done", which needs ALL THREE listeners to have settled at
+    // least once. A device stuck exactly the way this fix targets may never reach "done" at
+    // all (that's the bug), which would make that gate permanently false and this whole fix a
+    // no-op for the one case it exists for. Each listener only needs to know about itself.
+    let eventsSeenFirst = false, growthSeenFirst = false, settingsSeenFirst = false;
 
     unsubEvents = fbDb.collection(`${familyPath()}/events`).onSnapshot(
       (snap) => {
         this._noteSnapshotSource(snap);
         const changed = Store.mergeRemoteBatch("events", snap.docChanges().map((c) => ({ id: c.doc.id, ...c.doc.data() })));
-        if (changed && this.state === "done") this._noteLiveConnectionConfirmed();
+        if (changed && eventsSeenFirst) this._noteLiveConnectionConfirmed();
+        eventsSeenFirst = true;
         settled();
       },
       (err) => this._onListenerError(err)
@@ -350,7 +357,8 @@ const Sync = {
       (snap) => {
         this._noteSnapshotSource(snap);
         const changed = Store.mergeRemoteBatch("growth", snap.docChanges().map((c) => ({ id: c.doc.id, ...c.doc.data() })));
-        if (changed && this.state === "done") this._noteLiveConnectionConfirmed();
+        if (changed && growthSeenFirst) this._noteLiveConnectionConfirmed();
+        growthSeenFirst = true;
         settled();
       },
       (err) => this._onListenerError(err)
@@ -359,7 +367,8 @@ const Sync = {
       (doc) => {
         this._noteSnapshotSource(doc);
         const changed = doc.exists && Store.mergeRemoteSettings(doc.data());
-        if (changed && this.state === "done") this._noteLiveConnectionConfirmed();
+        if (changed && settingsSeenFirst) this._noteLiveConnectionConfirmed();
+        settingsSeenFirst = true;
         settled();
       },
       (err) => this._onListenerError(err)
