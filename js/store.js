@@ -306,6 +306,7 @@ const Store = {
     let changed = false;
     docs.forEach((doc) => { if (this._mergeOne(kind, doc)) changed = true; });
     if (changed) this.persist();
+    return changed;
   },
   _mergeOne(kind, doc) {
     const arr = this.data[kind];
@@ -321,6 +322,8 @@ const Store = {
     if ((settings.updatedAt || '') >= (this.data.settings.updatedAt || '')) {
       this.data.settings = Object.assign({}, this.data.settings, settings);
       this.persist();
+      return true;
     }
+    return false;
   },
 };

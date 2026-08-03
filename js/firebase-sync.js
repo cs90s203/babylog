@@ -338,15 +338,30 @@ const Sync = {
     };
 
     unsubEvents = fbDb.collection(`${familyPath()}/events`).onSnapshot(
-      (snap) => { this._noteSnapshotSource(snap); Store.mergeRemoteBatch("events", snap.docChanges().map((c) => ({ id: c.doc.id, ...c.doc.data() }))); settled(); },
+      (snap) => {
+        this._noteSnapshotSource(snap);
+        const changed = Store.mergeRemoteBatch("events", snap.docChanges().map((c) => ({ id: c.doc.id, ...c.doc.data() })));
+        if (changed && this.state === "done") this._noteLiveConnectionConfirmed();
+        settled();
+      },
       (err) => this._onListenerError(err)
     );
     unsubGrowth = fbDb.collection(`${familyPath()}/growth`).onSnapshot(
-      (snap) => { this._noteSnapshotSource(snap); Store.mergeRemoteBatch("growth", snap.docChanges().map((c) => ({ id: c.doc.id, ...c.doc.data() }))); settled(); },
+      (snap) => {
+        this._noteSnapshotSource(snap);
+        const changed = Store.mergeRemoteBatch("growth", snap.docChanges().map((c) => ({ id: c.doc.id, ...c.doc.data() })));
+        if (changed && this.state === "done") this._noteLiveConnectionConfirmed();
+        settled();
+      },
       (err) => this._onListenerError(err)
     );
     unsubSettings = fbDb.doc(`${familyPath()}/settings/main`).onSnapshot(
-      (doc) => { this._noteSnapshotSource(doc); if (doc.exists) Store.mergeRemoteSettings(doc.data()); settled(); },
+      (doc) => {
+        this._noteSnapshotSource(doc);
+        const changed = doc.exists && Store.mergeRemoteSettings(doc.data());
+        if (changed && this.state === "done") this._noteLiveConnectionConfirmed();
+        settled();
+      },
       (err) => this._onListenerError(err)
     );
   },
@@ -435,6 +450,23 @@ const Sync = {
         try { sessionStorage.removeItem(this._reloadAttemptedKeyFor(currentFamilyId)); } catch (e) {}
       }
     }
+    this.listeners.forEach((fn) => fn());
+  },
+  // INCIDENT (2026-08-02): metadata.fromCache is documented to sometimes stay stuck `true`
+  // even while a listener is genuinely receiving live server updates (see
+  // firebase-js-sdk#8343) — confirmed on a real device where two phones were actively
+  // exchanging new records in real time while this device's own diagnostics kept insisting
+  // it was offline. A snapshot that lands AFTER the initial settle (this.state === "done",
+  // i.e. not just first-load cache hydration) and actually contains new/changed data — data
+  // this device didn't already have — could only have arrived via a real live update; no
+  // stale local cache spontaneously produces someone else's new record on its own. Trust
+  // that observed behavior over what the metadata flag claims.
+  _noteLiveConnectionConfirmed() {
+    if (!this.fromCacheOnly && !this.networkLikelyBlocked) return;
+    this.fromCacheOnly = false;
+    this.networkLikelyBlocked = false;
+    clearTimeout(this._cacheWatchdog);
+    try { sessionStorage.removeItem(this._reloadAttemptedKeyFor(currentFamilyId)); } catch (e) {}
     this.listeners.forEach((fn) => fn());
   },
   _detachListeners() {
