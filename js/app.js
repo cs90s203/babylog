@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.33.19';
+const APP_VERSION = '2.33.20';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -100,10 +100,6 @@ const App = {
     // only on this phone. Silently logging that is what let a day's records go unbacked-up
     // (see CHANGELOG 2.33.4), so tell the user the moment it happens.
     Sync._onPushError = () => this.toast('⚠️', '紀錄沒能上傳到雲端，目前只存在這支手機——請看設定→同步與帳號');
-    // If the connection stays stuck on the offline cache for too long (see fromCacheOnly's
-    // watchdog in firebase-sync.js), a full reload is about to happen automatically — warn
-    // first so it doesn't look like the app randomly refreshed itself.
-    Sync._onStuckOnCache = () => this.toast('🔄', '連線卡住了，即將自動重新整理…');
     if (window.matchMedia) {
       const mq = window.matchMedia('(prefers-color-scheme: dark)');
       const handler = () => { if (this.state.theme === 'auto') this.rerender(); };

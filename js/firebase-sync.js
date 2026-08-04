@@ -159,7 +159,7 @@ const Sync = {
   // account doesn't have access to, or the family it's already on.
   switchFamily(id) {
     if (!this.availableFamilyIds.includes(id) || id === currentFamilyId) return;
-    this._detachListeners(); // also clears any stale cache-watchdog state (fromCacheOnly/networkLikelyBlocked) now — see _detachListeners
+    this._detachListeners(); // also clears any stale fromCacheOnly flag — see _detachListeners
     // A push failure banner (or a cache-only warning) recorded against the PREVIOUS family
     // has nothing to do with this one's health — don't let it bleed into a freshly-switched,
     // possibly-perfectly-healthy family.
@@ -375,113 +375,41 @@ const Sync = {
     );
   },
   // With enablePersistence on, a wedged server connection doesn't raise an error — onSnapshot
-  // just keeps serving the local IndexedDB cache, so the app looked perfectly healthy while
-  // never seeing the other phone's records (see CHANGELOG 2.33.5). metadata.fromCache is the
-  // only signal that distinguishes the two, so track it and let the UI say so rather than
-  // claiming live sync.
+  // just keeps serving the local IndexedDB cache, so the app can look healthy while never
+  // seeing another phone's records (see CHANGELOG 2.33.5). metadata.fromCache is the only
+  // signal available for this, so it's still tracked and shown — but NOT trusted enough to
+  // drive an automatic reload anymore.
+  // INCIDENT (2026-08-02): metadata.fromCache is documented to sometimes stay stuck `true`
+  // for extended periods even while a listener is genuinely receiving live server updates
+  // (see firebase-js-sdk#8343) — confirmed on a real device where two phones were actively
+  // exchanging new records in real time while this device's own diagnostics kept insisting it
+  // was offline. The auto-reload-after-12s escalation this used to have (CHANGELOG 2.33.7)
+  // was built on the assumption that a stuck flag reliably means a stuck connection; it
+  // doesn't, so an unreliable signal was driving a real action (a forced reload, burning a
+  // full re-read of everything) on a false alarm. Now this only ever updates the passive
+  // diagnostics display and the manual "reconnect" button stays available — no auto-reload,
+  // no separate "still stuck after reloading" escalation state.
   fromCacheOnly: false,
-  _cacheWatchdog: null,
-  // A server connection that's actually just slow clears fromCacheOnly within a couple of
-  // seconds on its own once the round-trip completes — that's normal and expected, not
-  // escalated. But if it STAYS cache-only, neither the automatic retry backoff
-  // (_onListenerError) nor a manual detach/reattach (forceResync) can help, because neither
-  // one touches whatever's actually wedged (observed on a real device that stayed
-  // cache-only across multiple manual reconnect attempts and an app-version update — i.e.
-  // something below the onSnapshot layer, most likely the IndexedDB persistence connection
-  // itself, not the listener subscription). A full page reload is the one thing guaranteed
-  // to rebuild that from zero, so escalate to it automatically rather than leaving the user
-  // stuck on a button that looks like it should work but doesn't.
-  // INCIDENT (see CHANGELOG 2.33.8): the auto-reload below fixes a wedged LOCAL persistence
-  // layer, but if what's actually wrong is the network itself (a firewall/VPN/carrier
-  // blocking Firestore's connection outright), a reload reruns straight into the same
-  // stuck state — and did, every ~12s, forever. From the user's side that's indistinguishable
-  // from "nothing happened", because nothing meaningful did. sessionStorage caps this to ONE
-  // automatic reload per browser session; if it's still stuck afterward, stop reloading and
-  // say so plainly instead of looping silently.
-  networkLikelyBlocked: false,
-  // Scoped per family (not one global key) — a stuck episode on family A using up this
-  // session's one reload must not silently suppress a legitimate, genuinely-first-ever stuck
-  // episode on family B later in the same tab (this app supports one account belonging to
-  // more than one family).
-  _reloadAttemptedKeyFor(familyId) { return "bt_local_stuck_reload_tried_" + (familyId || "none"); },
-  _armCacheWatchdog() {
-    clearTimeout(this._cacheWatchdog);
-    const familyAtArmTime = currentFamilyId; // a switch/detach before this fires makes it stale — see the check below
-    this._cacheWatchdog = setTimeout(() => {
-      if (!this.fromCacheOnly || currentFamilyId !== familyAtArmTime) return;
-      const key = this._reloadAttemptedKeyFor(familyAtArmTime);
-      let sessionStorageOk = true, alreadyTried = false;
-      try { alreadyTried = sessionStorage.getItem(key) === "1"; } catch (e) { sessionStorageOk = false; }
-      if (alreadyTried || !sessionStorageOk) {
-        // Either this session already spent its one automatic reload for this family, or we
-        // can't reliably track that (sessionStorage throwing/unavailable — private browsing,
-        // a restricted webview). Reloading again in either case isn't provably bounded, so
-        // fail SAFE by not reloading rather than risking the original infinite-reload
-        // incident recurring silently in a browser where the guard itself doesn't work.
-        console.error(sessionStorageOk
-          ? "Stuck on offline cache even after an automatic reload — likely a network block, not looping again."
-          : "Stuck on offline cache and sessionStorage is unavailable — cannot safely auto-reload, reporting instead.");
-        this.networkLikelyBlocked = true;
-        this.listeners.forEach((fn) => fn());
-        return;
-      }
-      try { sessionStorage.setItem(key, "1"); } catch (e) { /* best-effort; we're reloading regardless */ }
-      console.error("Stuck on offline cache for 12s after reconnect attempt — forcing ONE reload.");
-      if (this._onStuckOnCache) this._onStuckOnCache();
-      setTimeout(() => location.reload(), 1500);
-    }, 12000);
-  },
-  _onStuckOnCache: null, // set by app.js to toast before the auto-reload below fires
-  // Clears the pending watchdog and any cache-only/blocked flags — called from
-  // _detachListeners so EVERY exit from a listener generation (sign-out, switchFamily,
-  // forceResync, a fresh reattach) starts the next one with a clean slate instead of
-  // inheriting a stale timer or flag that has nothing to do with the new cycle's actual
-  // connection health.
-  _resetCacheWatchdogState() {
-    clearTimeout(this._cacheWatchdog);
-    this._cacheWatchdog = null;
-    if (this.fromCacheOnly || this.networkLikelyBlocked) {
-      this.fromCacheOnly = false;
-      this.networkLikelyBlocked = false;
-      this.listeners.forEach((fn) => fn());
-    }
-  },
   _noteSnapshotSource(snap) {
     const cached = !!(snap && snap.metadata && snap.metadata.fromCache);
     if (cached === this.fromCacheOnly) return;
     this.fromCacheOnly = cached;
-    if (cached) {
-      this._armCacheWatchdog();
-    } else {
-      clearTimeout(this._cacheWatchdog);
-      if (this.networkLikelyBlocked) {
-        this.networkLikelyBlocked = false;
-        try { sessionStorage.removeItem(this._reloadAttemptedKeyFor(currentFamilyId)); } catch (e) {}
-      }
-    }
     this.listeners.forEach((fn) => fn());
   },
-  // INCIDENT (2026-08-02): metadata.fromCache is documented to sometimes stay stuck `true`
-  // even while a listener is genuinely receiving live server updates (see
-  // firebase-js-sdk#8343) — confirmed on a real device where two phones were actively
-  // exchanging new records in real time while this device's own diagnostics kept insisting
-  // it was offline. A snapshot that lands AFTER the initial settle (this.state === "done",
-  // i.e. not just first-load cache hydration) and actually contains new/changed data — data
-  // this device didn't already have — could only have arrived via a real live update; no
-  // stale local cache spontaneously produces someone else's new record on its own. Trust
-  // that observed behavior over what the metadata flag claims.
+  // A snapshot that lands AFTER the initial settle (i.e. not just first-load cache hydration)
+  // and actually contains new/changed data — data this device didn't already have — could
+  // only have arrived via a real live update; no stale local cache spontaneously produces
+  // someone else's new record on its own. Trust that observed behavior over what the
+  // fromCache metadata flag claims (see the INCIDENT note above _noteSnapshotSource).
   _noteLiveConnectionConfirmed() {
-    if (!this.fromCacheOnly && !this.networkLikelyBlocked) return;
+    if (!this.fromCacheOnly) return;
     this.fromCacheOnly = false;
-    this.networkLikelyBlocked = false;
-    clearTimeout(this._cacheWatchdog);
-    try { sessionStorage.removeItem(this._reloadAttemptedKeyFor(currentFamilyId)); } catch (e) {}
     this.listeners.forEach((fn) => fn());
   },
   _detachListeners() {
     clearTimeout(this._retryTimer);
     this._resyncToken++; // invalidate any in-flight forceResync tail from a previous cycle (see forceResync)
-    this._resetCacheWatchdogState(); // a stale watchdog/cache-only flag must not survive into whatever comes next
+    if (this.fromCacheOnly) { this.fromCacheOnly = false; this.listeners.forEach((fn) => fn()); }
     if (unsubEvents) unsubEvents();
     if (unsubGrowth) unsubGrowth();
     if (unsubSettings) unsubSettings();
