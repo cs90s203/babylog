@@ -1222,7 +1222,7 @@ function renderCalendar(state) {
   const grid = `<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px;">${cells.join('')}</div>`;
   const header = `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
     <button onclick="A.calPrevMonth()" ${atMin ? 'disabled' : ''} style="width:32px;height:32px;border-radius:50%;background:var(--card2);border:none;font-size:15px;font-weight:700;color:var(--text);opacity:${atMin ? 0.35 : 1};">‹</button>
-    <p style="font-size:16px;font-weight:800;color:var(--text);">${y}年${m + 1}月</p>
+    <p style="font-size:16px;font-weight:800;color:var(--text);">${m + 1}月</p>
     <button onclick="A.calNextMonth()" ${atMax ? 'disabled' : ''} style="width:32px;height:32px;border-radius:50%;background:var(--card2);border:none;font-size:15px;font-weight:700;color:var(--text);opacity:${atMax ? 0.35 : 1};">›</button>
   </div>`;
   return `<div class="card" style="padding:16px;margin-bottom:14px;">${header}${wdRow}${grid}</div>`;
@@ -1350,6 +1350,138 @@ function dayStatsSummary(d) {
   const row2 = `<div style="display:flex;margin-top:12px;padding-top:12px;border-top:1px solid var(--line);">${stat(poopCount, '排便次數')}${div}${stat(peeCount, '尿尿次數')}${div}${stat(sleepLabel, '前一晚睡眠(推估)')}</div>`;
   return `<div style="background:var(--card2);border-radius:14px;padding:12px 4px;margin-bottom:12px;">${row1}${row2}</div>`;
 }
+
+// {years, months, days} since birth, clamped to 0 for a not-yet-born date — same rounding
+// convention as babyAgeLabel() (30.4375-day average month) so the two never disagree on the
+// same birthday.
+function ageBreakdown(birth) {
+  const totalDays = Math.floor((new Date() - new Date(birth)) / 86400000);
+  if (totalDays < 0) return null;
+  const totalMonths = Math.floor(totalDays / 30.4375);
+  return { years: Math.floor(totalMonths / 12), months: totalMonths % 12, days: totalDays - Math.round(totalMonths * 30.4375) };
+}
+function ageLabelDetailed(birth) {
+  const a = ageBreakdown(birth);
+  if (!a) return '即將出生';
+  const parts = [];
+  if (a.years > 0) parts.push(a.years + '歲');
+  if (a.months > 0 || a.years > 0) parts.push(a.months + '個月');
+  parts.push(Math.max(0, a.days) + '天');
+  return parts.join('');
+}
+// From the first growth record to the latest — only shown once there are 2+ records, since a
+// single measurement has nothing to compare against and a "+0.0kg" delta would just look broken.
+function renderGrowthSummaryCard() {
+  const s = Store.data.settings;
+  if (!s.babyBirth) return '';
+  const growth = Store.liveGrowth().slice().sort((a, b) => new Date(a.date) - new Date(b.date));
+  const ageLine = `<p style="font-size:20px;font-weight:800;color:var(--text);">${esc(s.babyName || '寶寶')} 現在 ${ageLabelDetailed(s.babyBirth)}</p>`;
+  let deltaLine = '';
+  if (growth.length >= 2) {
+    const first = growth[0], latest = growth[growth.length - 1];
+    const deltas = [['weight', '⚖️', 'kg'], ['height', '📏', 'cm']]
+      .filter(([k]) => first[k] != null && latest[k] != null)
+      .map(([k, emoji, unit]) => `${emoji} ${(latest[k] - first[k] >= 0 ? '+' : '')}${(latest[k] - first[k]).toFixed(1)}${unit}`);
+    if (deltas.length) {
+      deltaLine = `<p style="font-size:12.5px;color:var(--text2);margin-top:6px;">從 ${esc(first.date)} 到 ${esc(latest.date)}：${deltas.join('　')}</p>`;
+    }
+  }
+  return `<div class="card" style="padding:16px;margin-bottom:14px;">${ageLine}${deltaLine}</div>`;
+}
+
+// Curated general pediatric development reference points, NOT sourced live — see the
+// discussion that added this (2026-08). Deliberately worded soft ("多數"/"開始"/"約") because
+// every baby's timeline varies; this is a general reference, not a checklist to hit on
+// schedule. Picks the first bucket whose maxMonths the baby's current age doesn't exceed.
+const GROWTH_MILESTONES = [
+  { maxMonths: 1, title: '0–1 個月・新生兒期', tips: [
+    '大部分時間在睡覺與喝奶，清醒時間很短，這是正常的',
+    '開始能短暫注視近距離（20–30 公分）、對比明顯的臉孔或圖案',
+    '聽力已發展成熟，突然的聲響可能引發驚跳反射',
+    '可以開始每天幾分鐘的趴姿練習（tummy time），幫助頸部肌肉發展',
+  ]},
+  { maxMonths: 2, title: '1–2 個月', tips: [
+    '開始出現社交性微笑，會回應你的臉孔與聲音',
+    '趴著時能短暫抬頭',
+    '視線開始能追蹤緩慢移動的物體（追視）',
+    '醒著的時間逐漸變長，多說話、唱歌能刺激聽力與語言發展',
+  ]},
+  { maxMonths: 4, title: '2–4 個月', tips: [
+    '追視能力進步，能追蹤大範圍移動的物體',
+    '開始會發出「咕咕」聲回應互動',
+    '趴著時能抬頭 45–90 度，逐漸能用前臂撐起上半身',
+    '手開始會主動張開，嘗試抓握玩具',
+    '日夜節律逐漸建立，可以開始固定的睡前儀式（洗澡、換睡衣、關燈）',
+  ]},
+  { maxMonths: 6, title: '4–6 個月', tips: [
+    '多數寶寶開始能翻身（趴到躺、躺到趴）',
+    '開始能有支撐地坐，逐漸練習獨立坐穩',
+    '手眼協調進步，會主動伸手抓取物品並放入口中探索',
+    '常見開始考慮添加副食品的階段（實際時機依寶寶發展徵兆，建議諮詢兒科醫師）',
+    '夜間睡眠可能開始拉長，是嘗試建立規律作息的常見階段',
+  ]},
+  { maxMonths: 9, title: '6–9 個月', tips: [
+    '開始坐穩，可能開始爬行或用其他方式移動',
+    '開始出現物體恆存概念（東西被遮住還知道它存在）',
+    '可能出現怕生、認人，對主要照顧者依附明顯',
+    '開始能用拇指與食指抓取小東西，可以嘗試練習手指食物',
+    '多數寶寶在生理上已具備睡過夜的能力（不代表一定會，個體差異大）',
+  ]},
+  { maxMonths: 12, title: '9–12 個月', tips: [
+    '可能開始扶站、扶走，少數寶寶已經開始放手走',
+    '會模仿簡單動作，例如拍手、揮手掰掰',
+    '開始聽懂簡單指令或自己的名字',
+    '精細動作進步，能用拇指食指捏取小物品',
+    '副食品質地可以逐漸從泥狀進展到小塊狀，鼓勵寶寶自己用手抓食',
+  ]},
+  { maxMonths: 18, title: '12–18 個月', tips: [
+    '多數寶寶已經能獨立行走',
+    '詞彙量開始增加，可能會說幾個有意義的單字',
+    '可以開始讓寶寶自己嘗試用湯匙進食（即使還不熟練）',
+    '探索慾望強，是居家安全防護（櫃子鎖、插座蓋、樓梯門）特別重要的階段',
+  ]},
+  { maxMonths: 24, title: '18–24 個月', tips: [
+    '開始會說簡單的兩字詞短句',
+    '走路更穩，可能開始會跑、扶著上下樓梯',
+    '開始出現自主意識，情緒表達可能變得更明顯',
+    '如果有觀察到相關發展徵兆，可以開始評估如廁訓練的時機（非強制時間點）',
+  ]},
+  { maxMonths: Infinity, title: '2 歲以上', tips: [
+    '語言能力快速發展，詞彙量明顯增加，開始能說短句',
+    '動作更靈活，會跑跳、踢球',
+    '開始出現更明顯的社交互動與平行遊戲（跟其他小孩一起玩，不一定互動）',
+    '依發展狀況持續評估如廁訓練與生活自理能力的建立',
+  ]},
+];
+function renderGrowthAdviceCard() {
+  const s = Store.data.settings;
+  if (!s.babyBirth) return '';
+  const a = ageBreakdown(s.babyBirth);
+  if (!a) return '';
+  const ageMonths = a.years * 12 + a.months;
+  const stage = GROWTH_MILESTONES.find(g => ageMonths <= g.maxMonths) || GROWTH_MILESTONES[GROWTH_MILESTONES.length - 1];
+  const tipsHtml = `<ul style="margin:0;padding-left:18px;">${stage.tips.map(t => `<li style="font-size:12.5px;color:var(--text2);line-height:1.7;">${esc(t)}</li>`).join('')}</ul>`;
+  // Fold in this baby's actual growth-curve standing when available — same WHO LMS data the
+  // 成長曲線 stats tab already uses, so the two never disagree with each other.
+  let pctNote = '';
+  if (s.babySex) {
+    const growth = Store.liveGrowth().slice().sort((a, b) => new Date(a.date) - new Date(b.date));
+    const latest = growth[growth.length - 1];
+    if (latest) {
+      const ageAtLatest = (new Date(latest.date) - new Date(s.babyBirth)) / 86400000 / 30.4375;
+      const notes = [['weight', '體重'], ['height', '身高']]
+        .map(([k, label]) => {
+          if (latest[k] == null) return null;
+          const z = whoZScore(k, s.babySex, ageAtLatest, latest[k]);
+          return z ? `${label} P${Math.round(z.percentile)}` : null;
+        })
+        .filter(Boolean);
+      if (notes.length) pctNote = `<p style="font-size:11px;color:var(--text3);margin-top:10px;">目前成長曲線：${notes.join('　')}（依 WHO 對照表，僅供參考）</p>`;
+    }
+  }
+  return sCard(`🌱 ${stage.title}`, tipsHtml + pctNote);
+}
+
 function renderRecords(state) {
   const cal = renderCalendar(state);
   const toggleBtn = `<button onclick="A.toggleCompareMode()" style="font-size:12.5px;font-weight:700;font-family:inherit;color:${state.compareMode ? '#fff' : 'var(--text2)'};background:${state.compareMode ? 'var(--accent)' : 'var(--card2)'};border:none;border-radius:12px;padding:8px 14px;">📊 比較</button>`;
@@ -1377,7 +1509,10 @@ function renderRecords(state) {
   }
   return `<div class="ns" style="flex:1;min-height:0;padding-bottom:78px;">
     ${headerBar('紀錄')}
+    <p style="font-size:13px;font-weight:700;color:var(--text3);padding:0 22px;margin-bottom:6px;">${state.calYear}年</p>
     <div style="padding:8px 16px 0;">
+      ${renderGrowthSummaryCard()}
+      ${renderGrowthAdviceCard()}
       <div style="display:flex;justify-content:flex-end;margin-bottom:10px;">${toggleBtn}</div>
       ${cal}
       ${panel}
