@@ -1392,19 +1392,29 @@ function renderGrowthSummaryCard() {
 // Curated general pediatric development reference points, NOT sourced live — see the
 // discussion that added this (2026-08). Deliberately worded soft ("多數"/"開始"/"約") because
 // every baby's timeline varies; this is a general reference, not a checklist to hit on
-// schedule. Picks the first bucket whose maxMonths the baby's current age doesn't exceed.
+// schedule. maxMonths is an EXCLUSIVE upper bound (matches how the "X–Y 個月" title reads:
+// "1–2 個月" covers [1,2), so a baby who just turned 2 months moves on to "2–4 個月", not
+// staying in "1–2" — the strict "<" below is load-bearing for that boundary.
 const GROWTH_MILESTONES = [
   { maxMonths: 1, title: '0–1 個月・新生兒期', tips: [
     '大部分時間在睡覺與喝奶，清醒時間很短，這是正常的',
     '開始能短暫注視近距離（20–30 公分）、對比明顯的臉孔或圖案',
     '聽力已發展成熟，突然的聲響可能引發驚跳反射',
     '可以開始每天幾分鐘的趴姿練習（tummy time），幫助頸部肌肉發展',
+  ], watch: [
+    '睡覺一律仰睡，嬰兒床避免放枕頭、棉被、玩偶等鬆軟物品，降低嬰兒猝死風險',
+    '避免劇烈搖晃寶寶（尤其頭部），可能造成腦部傷害',
+    '黃疸未退、體重掉超過出生體重 10%、發燒等狀況，建議儘快就醫評估',
   ]},
   { maxMonths: 2, title: '1–2 個月', tips: [
     '開始出現社交性微笑，會回應你的臉孔與聲音',
     '趴著時能短暫抬頭',
     '視線開始能追蹤緩慢移動的物體（追視）',
     '醒著的時間逐漸變長，多說話、唱歌能刺激聽力與語言發展',
+  ], watch: [
+    '持續仰睡，趴睡風險仍在',
+    '抱著或換尿布時注意頸部支撐，頭頸控制能力還沒發展完全',
+    '對聲音、光線幾乎沒有反應，或很少對人臉有反應，建議提出來跟醫師討論',
   ]},
   { maxMonths: 4, title: '2–4 個月', tips: [
     '追視能力進步，能追蹤大範圍移動的物體',
@@ -1412,6 +1422,10 @@ const GROWTH_MILESTONES = [
     '趴著時能抬頭 45–90 度，逐漸能用前臂撐起上半身',
     '手開始會主動張開，嘗試抓握玩具',
     '日夜節律逐漸建立，可以開始固定的睡前儀式（洗澡、換睡衣、關燈）',
+  ], watch: [
+    '開始會用力蹬腳、扭動，換尿布/洗澡台上絕對不要放著寶寶一個人離開，即使只有幾秒',
+    '玩具、固齒器要確認沒有小零件脫落風險',
+    '睡覺仍要仰睡，清醒時的趴姿練習需要有人在旁看顧',
   ]},
   { maxMonths: 6, title: '4–6 個月', tips: [
     '多數寶寶開始能翻身（趴到躺、躺到趴）',
@@ -1419,6 +1433,10 @@ const GROWTH_MILESTONES = [
     '手眼協調進步，會主動伸手抓取物品並放入口中探索',
     '常見開始考慮添加副食品的階段（實際時機依寶寶發展徵兆，建議諮詢兒科醫師）',
     '夜間睡眠可能開始拉長，是嘗試建立規律作息的常見階段',
+  ], watch: [
+    '添加副食品時，蜂蜜、全脂鮮奶、整顆葡萄/堅果等容易噎到的食物都還不適合',
+    '開始會抓握，小物品、繩子、窗簾拉繩要移出可及範圍，注意誤食與勒纏風險',
+    '翻身能力出現後，換尿布台、床邊要更加注意墜落風險',
   ]},
   { maxMonths: 9, title: '6–9 個月', tips: [
     '開始坐穩，可能開始爬行或用其他方式移動',
@@ -1426,6 +1444,10 @@ const GROWTH_MILESTONES = [
     '可能出現怕生、認人，對主要照顧者依附明顯',
     '開始能用拇指與食指抓取小東西，可以嘗試練習手指食物',
     '多數寶寶在生理上已具備睡過夜的能力（不代表一定會，個體差異大）',
+  ], watch: [
+    '開始爬行、移動範圍變大，樓梯、插座、櫃角、化學/藥品收納要提前準備防護',
+    '手指食物要切成安全大小，全程有大人看顧進食，降低噎到風險',
+    '長牙可能伴隨煩躁、流口水增加，若合併高燒不建議直接歸因於長牙，需留意',
   ]},
   { maxMonths: 12, title: '9–12 個月', tips: [
     '可能開始扶站、扶走，少數寶寶已經開始放手走',
@@ -1433,24 +1455,40 @@ const GROWTH_MILESTONES = [
     '開始聽懂簡單指令或自己的名字',
     '精細動作進步，能用拇指食指捏取小物品',
     '副食品質地可以逐漸從泥狀進展到小塊狀，鼓勵寶寶自己用手抓食',
+  ], watch: [
+    '扶站/扶走容易跌倒撞到桌角，家具邊角防護、家具穩固性（防傾倒）要檢查',
+    '小物品誤食風險持續存在（電池、硬幣、玩具零件），留意活動範圍內的地面',
+    '固體比例增加，仍要全程看顧進食，避免噎到',
   ]},
   { maxMonths: 18, title: '12–18 個月', tips: [
     '多數寶寶已經能獨立行走',
     '詞彙量開始增加，可能會說幾個有意義的單字',
     '可以開始讓寶寶自己嘗試用湯匙進食（即使還不熟練）',
     '探索慾望強，是居家安全防護（櫃子鎖、插座蓋、樓梯門）特別重要的階段',
+  ], watch: [
+    '走路階段跌倒機率增加，居家防撞、樓梯門/柵欄要確認到位',
+    '開始能打開櫃子抽屜，清潔劑、藥品、尖銳物品要確實鎖好或移到拿不到的地方',
+    '開始有較強的自主意識，情緒表達可能變得激烈，這是正常發展的一部分',
   ]},
   { maxMonths: 24, title: '18–24 個月', tips: [
     '開始會說簡單的兩字詞短句',
     '走路更穩，可能開始會跑、扶著上下樓梯',
     '開始出現自主意識，情緒表達可能變得更明顯',
     '如果有觀察到相關發展徵兆，可以開始評估如廁訓練的時機（非強制時間點）',
+  ], watch: [
+    '活動力更強、好奇心旺盛，戶外/公共場所要更留意看顧，避免脫離視線',
+    '開始能爬高，家具攀爬、窗戶防護要留意',
+    '語言發展有落差是常見的，但若完全沒有任何字詞、對呼喚名字都沒反應，建議提出來討論',
   ]},
   { maxMonths: Infinity, title: '2 歲以上', tips: [
     '語言能力快速發展，詞彙量明顯增加，開始能說短句',
     '動作更靈活，會跑跳、踢球',
     '開始出現更明顯的社交互動與平行遊戲（跟其他小孩一起玩，不一定互動）',
     '依發展狀況持續評估如廁訓練與生活自理能力的建立',
+  ], watch: [
+    '戶外活動增加，馬路安全、水域安全（游泳池、浴缸）要開始建立規則意識',
+    '情緒調節能力還在發展中，遇到挫折/生氣是正常的，不代表教養出了問題',
+    '如廁訓練期間偶爾退步是常見的，不需要過度緊張',
   ]},
 ];
 function renderGrowthAdviceCard() {
@@ -1459,8 +1497,12 @@ function renderGrowthAdviceCard() {
   const a = ageBreakdown(s.babyBirth);
   if (!a) return '';
   const ageMonths = a.years * 12 + a.months;
-  const stage = GROWTH_MILESTONES.find(g => ageMonths <= g.maxMonths) || GROWTH_MILESTONES[GROWTH_MILESTONES.length - 1];
-  const tipsHtml = `<ul style="margin:0;padding-left:18px;">${stage.tips.map(t => `<li style="font-size:12.5px;color:var(--text2);line-height:1.7;">${esc(t)}</li>`).join('')}</ul>`;
+  const stage = GROWTH_MILESTONES.find(g => ageMonths < g.maxMonths) || GROWTH_MILESTONES[GROWTH_MILESTONES.length - 1];
+  const list = (items) => `<ul style="margin:0;padding-left:18px;">${items.map(t => `<li style="font-size:12.5px;color:var(--text2);line-height:1.7;">${esc(t)}</li>`).join('')}</ul>`;
+  const tipsHtml = list(stage.tips);
+  const watchHtml = stage.watch && stage.watch.length
+    ? `<p style="font-size:12px;font-weight:700;color:#D2654A;margin:14px 0 4px;">⚠️ 該注意的事</p>${list(stage.watch)}`
+    : '';
   // Fold in this baby's actual growth-curve standing when available — same WHO LMS data the
   // 成長曲線 stats tab already uses, so the two never disagree with each other.
   let pctNote = '';
@@ -1479,7 +1521,7 @@ function renderGrowthAdviceCard() {
       if (notes.length) pctNote = `<p style="font-size:11px;color:var(--text3);margin-top:10px;">目前成長曲線：${notes.join('　')}（依 WHO 對照表，僅供參考）</p>`;
     }
   }
-  return sCard(`🌱 ${stage.title}`, tipsHtml + pctNote);
+  return sCard(`🌱 ${stage.title}`, tipsHtml + watchHtml + pctNote);
 }
 
 function renderRecords(state) {
@@ -1509,11 +1551,13 @@ function renderRecords(state) {
   }
   return `<div class="ns" style="flex:1;min-height:0;padding-bottom:78px;">
     ${headerBar('紀錄')}
-    <p style="font-size:13px;font-weight:700;color:var(--text3);padding:0 22px;margin-bottom:6px;">${state.calYear}年</p>
     <div style="padding:8px 16px 0;">
       ${renderGrowthSummaryCard()}
       ${renderGrowthAdviceCard()}
-      <div style="display:flex;justify-content:flex-end;margin-bottom:10px;">${toggleBtn}</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <p style="font-size:13px;font-weight:700;color:var(--text3);">${state.calYear}年</p>
+        ${toggleBtn}
+      </div>
       ${cal}
       ${panel}
     </div>
