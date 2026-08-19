@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.35.0';
+const APP_VERSION = '2.35.1';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -726,7 +726,7 @@ const App = {
   // L/R side-switching mid-session) and different in another: sleep can legitimately run for
   // many hours, so the auto-stop safety cap and the manual-entry duration fields are hours+
   // minutes, not minutes+seconds.
-  SLEEP_AUTO: 18 * 3600, SLEEP_MINKEEP: 60,
+  SLEEP_AUTO: 10 * 3600, SLEEP_MINKEEP: 60,
   _sleepTick: null,
   _loadSleep() {
     try { return JSON.parse(Store.local('sleep_session') || 'null'); }
