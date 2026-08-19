@@ -12,10 +12,11 @@ function hm(date) {
 function fracOf(date) { return date.getHours() + date.getMinutes() / 60; }
 
 const NURSE_COLOR = '#EC7FA0'; // rose — direct breastfeeding, distinct from bottle coral
+const SLEEP_COLOR = '#7FA8EC'; // blue — distinct from both nursing's rose and the milk corals
 function milkColorOf(ev) { return (ev.breastMl > 0 && ev.formulaMl > 0) ? '#C77D52' : ((ev.formulaMl > 0) ? '#E8A33D' : '#FF8C6B'); }
-function dotColor(ev) { return ev.type === 'milk' ? milkColorOf(ev) : ev.type === 'nurse' ? NURSE_COLOR : ev.type === 'poop' ? '#C8965A' : ev.type === 'brush' ? '#5BBFA0' : '#79C3F0'; }
-function tintBg(ev) { return ev.type === 'milk' ? ((ev.breastMl > 0 && ev.formulaMl > 0) ? 'var(--tMix)' : (ev.formulaMl > 0 ? 'var(--tMilkF)' : 'var(--tMilkB)')) : ev.type === 'nurse' ? 'var(--tNurse)' : ev.type === 'poop' ? 'var(--tPoop)' : ev.type === 'brush' ? 'var(--tBrush)' : 'var(--tPee)'; }
-function emojiOf(t) { return t === 'milk' ? '🍼' : t === 'nurse' ? '🤱' : t === 'poop' ? '💩' : t === 'brush' ? '👄' : '💧'; }
+function dotColor(ev) { return ev.type === 'milk' ? milkColorOf(ev) : ev.type === 'nurse' ? NURSE_COLOR : ev.type === 'sleep' ? SLEEP_COLOR : ev.type === 'poop' ? '#C8965A' : ev.type === 'brush' ? '#5BBFA0' : '#79C3F0'; }
+function tintBg(ev) { return ev.type === 'milk' ? ((ev.breastMl > 0 && ev.formulaMl > 0) ? 'var(--tMix)' : (ev.formulaMl > 0 ? 'var(--tMilkF)' : 'var(--tMilkB)')) : ev.type === 'nurse' ? 'var(--tNurse)' : ev.type === 'sleep' ? 'var(--tSleep)' : ev.type === 'poop' ? 'var(--tPoop)' : ev.type === 'brush' ? 'var(--tBrush)' : 'var(--tPee)'; }
+function emojiOf(t) { return t === 'milk' ? '🍼' : t === 'nurse' ? '🤱' : t === 'sleep' ? '😴' : t === 'poop' ? '💩' : t === 'brush' ? '👄' : '💧'; }
 function nurseDurLabel(sec) { sec = Math.floor(sec || 0); if (sec < 60) return sec + 's'; if (sec < 3600) return Math.floor(sec / 60) + 'm'; const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60); return h + 'h' + m + 'm'; }
 // Baby profile avatar — a photo (compressed thumbnail, see App.handleAvatarFile) takes
 // precedence over the emoji when both are set. Tapping the circle opens the picker sheet.
@@ -475,6 +476,9 @@ function renderTodayTimeline(state) {
       const sd = r.side === 'right' ? 'R' : 'L';
       kids += `<span style="color:${NURSE_COLOR};font-weight:800;">${sd}</span><span style="color:${NURSE_COLOR};">${nurseDurLabel(r.durationSec)}</span>`;
       if (!compact) kids += `<span style="font-size:10px;font-weight:700;color:${NURSE_COLOR};">親餵</span>`;
+    } else if (r.type === 'sleep') {
+      kids += `<span style="color:${SLEEP_COLOR};font-weight:800;">${nurseDurLabel(r.durationSec)}</span>`;
+      if (!compact) kids += `<span style="font-size:10px;font-weight:700;color:${SLEEP_COLOR};">睡眠</span>`;
     } else {
       const full = { poop: '排便', pee: '尿尿', brush: '刷牙' }[r.type];
       const short = { poop: '便', pee: '尿', brush: '牙' }[r.type];
@@ -2217,6 +2221,16 @@ function nurseSideDurationHtml(side, min, sec, pickAction, minAction, secAction)
       <input type="number" min="0" max="59" value="${sec}" onchange="A.${secAction}(this.value)" style="flex:1;text-align:center;" /><span style="color:var(--text2);font-weight:700;">秒</span>
     </div>`;
 }
+// Hours/minutes duration inputs for sleep (no side to pick — a single continuous span), shared
+// by the sleep backfill and edit sheets. Hours not minutes+seconds like nursing, since sleep
+// spans can legitimately run many hours.
+function sleepDurationHtml(hour, min, hourAction, minAction) {
+  return `<p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin:16px 0 8px;">時長</p>
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;">
+      <input type="number" min="0" value="${hour}" onchange="A.${hourAction}(this.value)" style="flex:1;text-align:center;" /><span style="color:var(--text2);font-weight:700;">時</span>
+      <input type="number" min="0" max="59" value="${min}" onchange="A.${minAction}(this.value)" style="flex:1;text-align:center;" /><span style="color:var(--text2);font-weight:700;">分</span>
+    </div>`;
+}
 function renderMilkSheet(state, reopen) {
   return `<div class="sheet-overlay" onclick="A.closeSheet()">
     <div class="sheet" onclick="event.stopPropagation()" onpointerdown="A.startSheetDrag(event)" style="${sheetAnim(reopen)}">
@@ -2272,6 +2286,23 @@ function renderNurseSheet(state, reopen) {
     </div>
   </div>`;
 }
+function renderSleepSheet(state, reopen) {
+  return `<div class="sheet-overlay" onclick="A.closeSheet()">
+    <div class="sheet" onclick="event.stopPropagation()" onpointerdown="A.startSheetDrag(event)" style="${sheetAnim(reopen)}">
+      <div class="sheet-handle"></div>
+      <h2 style="font-size:23px;font-weight:800;margin-bottom:6px;color:var(--text);">補記睡眠 😴</h2>
+      <p style="font-size:13px;color:var(--text2);margin-bottom:18px;">補之前忘了計時的睡眠。</p>
+      <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">日期</p>
+      <input type="date" value="${esc(state.recDate)}" onchange="A.onRecDate(this.value)" style="margin-bottom:16px;" />
+      <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">開始時間</p>
+      ${timeStepper(state)}
+      ${sleepDurationHtml(state.recSleepHour, state.recSleepMin, 'onRecSleepHour', 'onRecSleepMin')}
+      ${caregiverPickerHtml(state.recBy, 'pickRecBy', 'f-rec-by')}
+      <button onclick="A.confirmRecord()" class="primary-btn" style="margin-top:6px;">✓ 完成記錄</button>
+      <button onclick="A.closeSheet()" class="text-btn">取消</button>
+    </div>
+  </div>`;
+}
 function renderEditRecSheet(state, reopen) {
   const isMilk = state.recordType === 'milk';
   // Brush is neither milk nor a poop/pee pairable "diaper" event — it just gets the plain
@@ -2300,6 +2331,7 @@ function renderEditRecSheet(state, reopen) {
       ${typeSeg}
       ${milkBlock}
       ${state.recordType === 'nurse' ? nurseSideDurationHtml(state.editSide, state.editNurseMin, state.editNurseSec, 'pickEditSide', 'onEditNurseMin', 'onEditNurseSec') + `<button onclick="A.resumeNurse('${state.editingId}')" style="width:100%;background:var(--card2);border:1.5px dashed ${NURSE_COLOR};border-radius:14px;padding:12px;font-size:14px;font-weight:700;color:${NURSE_COLOR};margin-bottom:6px;">▶ 繼續計時（接續這筆）</button>` : ''}
+      ${state.recordType === 'sleep' ? sleepDurationHtml(state.editSleepHour, state.editSleepMin, 'onEditSleepHour', 'onEditSleepMin') + `<button onclick="A.resumeSleep('${state.editingId}')" style="width:100%;background:var(--card2);border:1.5px dashed ${SLEEP_COLOR};border-radius:14px;padding:12px;font-size:14px;font-weight:700;color:${SLEEP_COLOR};margin-bottom:6px;">▶ 繼續計時（接續這筆）</button>` : ''}
       ${caregiverPickerHtml(state.editBy, 'pickEditBy', 'f-edit-by')}
       <button onclick="A.saveEdit()" class="primary-btn" style="padding:16px;font-size:16px;">✓ 儲存變更</button>
       <button onclick="A.deleteFromEdit()" style="width:100%;background:transparent;border:none;padding:12px;font-size:14px;font-weight:700;color:#E5573D;margin-top:4px;">🗑️ 刪除這筆</button>
@@ -2354,7 +2386,7 @@ function renderDeleteConfirm(state) {
   const rec = Store.data.events.find(e => e.id === state.confirmDelId);
   if (!rec) return '';
   const mix = rec.breastMl > 0 && rec.formulaMl > 0;
-  const tn = rec.type === 'milk' ? ('喝奶 ' + (mix ? (rec.breastMl + '+' + rec.formulaMl + 'ml') : ((rec.amountMl || 0) + 'ml'))) : rec.type === 'nurse' ? ('親餵 ' + (rec.side === 'right' ? 'R' : 'L') + ' ' + nurseDurLabel(rec.durationSec)) : rec.type === 'brush' ? '刷牙' : rec.type === 'poop' ? '排便' : '尿尿';
+  const tn = rec.type === 'milk' ? ('喝奶 ' + (mix ? (rec.breastMl + '+' + rec.formulaMl + 'ml') : ((rec.amountMl || 0) + 'ml'))) : rec.type === 'nurse' ? ('親餵 ' + (rec.side === 'right' ? 'R' : 'L') + ' ' + nurseDurLabel(rec.durationSec)) : rec.type === 'sleep' ? ('睡眠 ' + nurseDurLabel(rec.durationSec)) : rec.type === 'brush' ? '刷牙' : rec.type === 'poop' ? '排便' : '尿尿';
   const delText = tn + ' · ' + hm(new Date(rec.time));
   return `<div style="position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);backdrop-filter:blur(4px);z-index:90;display:flex;align-items:center;justify-content:center;" onclick="A.cancelDelete()">
     <div onclick="event.stopPropagation()" style="background:var(--card);border-radius:26px;padding:26px 24px 20px;width:280px;text-align:center;box-shadow:0 24px 80px var(--shadow2);animation:pop .35s cubic-bezier(.17,.67,.32,1.2);">
@@ -2458,6 +2490,7 @@ function renderSheet(state) {
   if (state.sheet === 'milk') return renderMilkSheet(state, reopen);
   if (state.sheet === 'edit') return renderEditSheet(state, reopen);
   if (state.sheet === 'nurse') return renderNurseSheet(state, reopen);
+  if (state.sheet === 'sleep') return renderSleepSheet(state, reopen);
   if (state.sheet === 'editRec') return renderEditRecSheet(state, reopen);
   if (state.sheet === 'growth') return renderGrowthSheet(state, reopen);
   if (state.sheet === 'avatar') return renderAvatarSheet(state, reopen);
@@ -2528,6 +2561,20 @@ function renderNurseDock(state) {
   };
   return `<div class="nurse-dock">${col('left', true)}${col('right', false)}</div>`;
 }
+// Mirrors renderNurseDock, but a single button (no side-switching) mirrored to sit at R's
+// position — right next to the "+" add button, on the left instead of the right.
+function renderSleepDock(state) {
+  if (state.showWelcome) return '';
+  const A = AppRef(), s = state.sleep;
+  const active = !!s;
+  const timeTxt = active ? A.nurseFmt(A._sleepElapsed()) : '';
+  return `<div class="sleep-dock">
+    <div class="nb-col sleep${active ? ' active' : ''}" id="sleep-col">
+      <div class="nb-t" id="sleep-t">${timeTxt}</div>
+      <button class="nb-btn" onpointerdown="A.startSleepPress()" onpointerup="A.endSleepPress()" onpointerleave="A.endSleepPress()" onclick="A.onSleepTapGuard()"><span class="nb-emoji">😴</span><span class="nb-lbl">${active ? '醒來' : '入睡'}</span></button>
+    </div>
+  </div>`;
+}
 function renderNurseTutorial(state) {
   if (!state.nurseTutorial) return '';
   return `<div class="tut-overlay" onclick="if(event.target===this)A.closeNurseTutorial()">
@@ -2556,6 +2603,7 @@ function render(state) {
     ${screenHtml}
     ${renderNav(state)}
     ${renderNurseDock(state)}
+    ${renderSleepDock(state)}
     ${renderSheet(state)}
     ${renderDeleteConfirm(state)}
     ${renderDeleteGrowthConfirm(state)}

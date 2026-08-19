@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.34.2';
+const APP_VERSION = '2.35.0';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -41,6 +41,8 @@ const App = {
     nurseTutorial: false, // first-use nursing tutorial overlay showing
     recSide: 'left', // nurse backfill sheet's chosen side
     recNurseMin: 5, recNurseSec: 0, // nurse backfill/edit duration inputs
+    sleep: null, // running sleep session {baseSec:sec, since:ms, startWall:ms}; persisted to localStorage so it survives a reload (see the ---- sleep timer ---- section below)
+    recSleepHour: 0, recSleepMin: 30, // sleep backfill/edit duration inputs
     editSide: 'left', editNurseMin: 0, editNurseSec: 0, // nurse edit sheet's side + duration
     confirmDelId: null,
     dragId: null,
@@ -94,6 +96,7 @@ const App = {
     this.state.theme = Store.local('theme') || 'auto';
     this.state.showWelcome = !Store.caregiver;
     this.state.nurse = this._loadNurse(); // resume a nursing session left running before reload/close
+    this.state.sleep = this._loadSleep(); // resume a sleep session left running before reload/close
     Store.onChange(() => this.rerender());
     Sync.onChange(() => this.rerender());
     // Same reasoning for the other direction: a failed cloud push means this record exists
@@ -121,6 +124,7 @@ const App = {
     this.maybeShowCelebration();
     Sync.onChange(() => { if (Sync.state === 'done') this.maybeShowCelebration(); });
     if (this.state.nurse) this._startNurseTick(); // resume the running dock timer after first render
+    if (this.state.sleep) this._startSleepTick();
     // Firestore's onSnapshot listeners (attached once signed in) stay live on their own —
     // no polling or pull-to-refresh needed, unlike the old GitHub-Contents-API sync.
     Sync.init();
@@ -511,6 +515,11 @@ const App = {
       Store.addEvent('nurse', t, { side: s.recSide === 'right' ? 'right' : 'left', durationSec, by });
       this.set({ sheet: null });
       this.toast('🤱', '親餵補記了！');
+    } else if (type === 'sleep') {
+      const durationSec = (s.recSleepHour || 0) * 3600 + (s.recSleepMin || 0) * 60;
+      Store.addEvent('sleep', t, { durationSec, by });
+      this.set({ sheet: null });
+      this.toast('😴', '睡眠補記了！');
     } else {
       Store.addEvent(type, t, { by });
       const ev = Store.data.events[Store.data.events.length - 1];
@@ -709,6 +718,93 @@ const App = {
   resetNurseTutorial() { Store.local('nurse_tutorial_seen', ''); this.toast('🤱', '教學已重置，下次點親餵鈕會再出現'); },
   closeNurseTutorial() { Store.local('nurse_tutorial_seen', '1'); this.set({ nurseTutorial: false }); },
 
+  // ---- sleep timer (入睡/醒來) ----
+  // Same architecture as the nurse timer above — local-only running state (Store.local,
+  // never synced; see firebase-sync.js's INCIDENT notes on why bt_local_ keys stay
+  // device-only), persisted across reload, ticked via direct DOM patch to avoid a full
+  // re-render every 500ms. Simpler than nursing in one way (a single continuous span, no
+  // L/R side-switching mid-session) and different in another: sleep can legitimately run for
+  // many hours, so the auto-stop safety cap and the manual-entry duration fields are hours+
+  // minutes, not minutes+seconds.
+  SLEEP_AUTO: 18 * 3600, SLEEP_MINKEEP: 60,
+  _sleepTick: null,
+  _loadSleep() {
+    try { return JSON.parse(Store.local('sleep_session') || 'null'); }
+    catch (e) { console.error('Stored sleep session was corrupted, discarding:', e); return null; }
+  },
+  _saveSleep() { Store.local('sleep_session', this.state.sleep ? JSON.stringify(this.state.sleep) : ''); },
+  _sleepElapsed() { const s = this.state.sleep; return s ? s.baseSec + (Date.now() - s.since) / 1000 : 0; },
+  _sleepUpdateDock() {
+    const s = this.state.sleep;
+    const col = document.getElementById('sleep-col'), t = document.getElementById('sleep-t');
+    if (!col || !t) return;
+    col.classList.remove('active');
+    // Unlike the nurse dock (whose L/R label never changes), this single button's label
+    // flips between 入睡/醒來 to say what tapping it does next — patch it here too, not just
+    // the elapsed-time text, so that's correct immediately on tap without waiting for the
+    // next unrelated full rerender to catch up.
+    const lbl = col.querySelector('.nb-lbl');
+    if (s) { col.classList.add('active'); t.textContent = this.nurseFmt(this._sleepElapsed()); if (lbl) lbl.textContent = '醒來'; }
+    else { t.textContent = ''; if (lbl) lbl.textContent = '入睡'; }
+  },
+  _startSleepTick() {
+    this._stopSleepTick();
+    this._sleepTick = setInterval(() => {
+      if (!this.state.sleep) { this._stopSleepTick(); return; }
+      if (this._sleepElapsed() >= this.SLEEP_AUTO) { this._commitSleep(true); return; }
+      this._sleepUpdateDock();
+    }, 500);
+    this._sleepUpdateDock();
+  },
+  _stopSleepTick() { clearInterval(this._sleepTick); this._sleepTick = null; },
+  sleepTap() {
+    if (this.state.sleep) { this._commitSleep(false); return; }
+    this.state.sleep = { baseSec: 0, since: Date.now(), startWall: Date.now() };
+    this._saveSleep(); this._startSleepTick();
+  },
+  _commitSleep(auto) {
+    const s = this.state.sleep; if (!s) return;
+    const sec = Math.round(s.baseSec + (Date.now() - s.since) / 1000);
+    const startWall = s.startWall || Date.now();
+    this.state.sleep = null; this._saveSleep(); this._stopSleepTick();
+    if (sec >= this.SLEEP_MINKEEP) {
+      Store.addEvent('sleep', new Date(startWall), { durationSec: sec });
+      this.rerender();
+      this.toast('😴', (auto ? '自動停止・' : '') + '已記錄睡眠 ' + this.nurseFmt(sec));
+    } else {
+      this.rerender();
+      this.toast('😴', '太短，未記錄');
+    }
+  },
+  // Long-press the dock button → manual backfill sheet for a forgotten sleep session.
+  startSleepPress() {
+    this._sleepLongFired = false;
+    clearTimeout(this._sleepPressTimer);
+    if (this.state.sleep) return; // no long-press while timing
+    this._sleepPressTimer = setTimeout(() => { this._sleepLongFired = true; this.openSleepBackfill(); }, 1000);
+  },
+  endSleepPress() { clearTimeout(this._sleepPressTimer); },
+  onSleepTapGuard() { if (this._sleepLongFired) { this._sleepLongFired = false; return; } this.sleepTap(); },
+  openSleepBackfill() {
+    const n = new Date();
+    this.set({ sheet: 'sleep', recordType: 'sleep', recSleepHour: 0, recSleepMin: 30, rt: { h: n.getHours(), m: Math.round(n.getMinutes() / 5) * 5 % 60 }, recDate: todayStr(), recBy: Store.caregiver || '' });
+  },
+  onRecSleepHour(v) { this.state.recSleepHour = Math.max(0, parseInt(v, 10) || 0); },
+  onRecSleepMin(v) { this.state.recSleepMin = Math.min(59, Math.max(0, parseInt(v, 10) || 0)); },
+  onEditSleepHour(v) { this.state.editSleepHour = Math.max(0, parseInt(v, 10) || 0); },
+  onEditSleepMin(v) { this.state.editSleepMin = Math.min(59, Math.max(0, parseInt(v, 10) || 0)); },
+  // "繼續計時" from the edit sheet — resume timing a recorded session from its saved duration,
+  // same idea as resumeNurse.
+  resumeSleep(id) {
+    const rec = Store.data.events.find(e => e.id === id);
+    if (!rec) return;
+    Store.deleteEvent(id); // fold the old record back into the resumed session
+    this.state.sleep = { baseSec: rec.durationSec || 0, since: Date.now(), startWall: new Date(rec.time).getTime() };
+    this._saveSleep();
+    this.set({ sheet: null });
+    this._startSleepTick();
+  },
+
   // ---- timeline interactions ----
   toggleGap(key) {
     const cur = this.state.expandedGaps;
@@ -719,6 +815,7 @@ const App = {
     const st = { sheet: 'editRec', editingId: rec.id, recordType: rec.type, rt: { h: dt.getHours(), m: dt.getMinutes() }, editDate: todayStr(dt), editBy: rec.by || Store.caregiver || '' };
     if (rec.type === 'milk') { st.milkBreast = rec.breastMl || 0; st.milkFormula = rec.formulaMl || 0; }
     if (rec.type === 'nurse') { st.editSide = rec.side === 'right' ? 'right' : 'left'; const d = rec.durationSec || 0; st.editNurseMin = Math.floor(d / 60); st.editNurseSec = d % 60; }
+    if (rec.type === 'sleep') { const d = rec.durationSec || 0; st.editSleepHour = Math.floor(d / 3600); st.editSleepMin = Math.floor((d % 3600) / 60); }
     this.set(st);
   },
   onEditDate(v) { this.set({ editDate: v }); },
@@ -751,6 +848,7 @@ const App = {
     const patch = { type: s.recordType, time: t.toISOString(), by: this._editByValue() };
     if (s.recordType === 'milk') Object.assign(patch, { breastMl: s.milkBreast, formulaMl: s.milkFormula, amountMl: s.milkBreast + s.milkFormula });
     if (s.recordType === 'nurse') Object.assign(patch, { side: s.editSide === 'right' ? 'right' : 'left', durationSec: (s.editNurseMin || 0) * 60 + (s.editNurseSec || 0) });
+    if (s.recordType === 'sleep') Object.assign(patch, { durationSec: (s.editSleepHour || 0) * 3600 + (s.editSleepMin || 0) * 60 });
     Store.updateEvent(s.editingId, patch);
     this.set({ sheet: null });
     this.toast('✏️', '已更新');

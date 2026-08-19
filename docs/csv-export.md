@@ -25,6 +25,8 @@ Subject, Start Date, Start Time, End Date, End Time, All Day Event, Description
 | 喝奶（混合） | `🍼 喝奶 150ml（混合）` |
 | 排便 | `💩 排便` |
 | 尿尿 | `💧 尿尿` |
+| 親餵 | `🤱 親餵 左（12分34秒）` |
+| 睡眠 | `😴 睡眠（3時20分）` |
 
 ## 起訖時間怎麼算
 
@@ -33,6 +35,8 @@ Subject, Start Date, Start Time, End Date, End Time, All Day Event, Description
 - `mode = "end"`：事件紀錄的時間當**結束**，往前推 `minutes` 分鐘當開始。
 - `mode = "start"`：事件紀錄的時間當**開始**，往後推 `minutes` 分鐘當結束。
 - `minutes = 0`：起訖相同（日曆上會是一個瞬間的事件）。
+- **親餵／睡眠例外**：這兩種有實際計時的時長（`durationSec`），不看「事件時長」設定——
+  一律從紀錄的時間開始，往後推實際秒數當結束。
 
 ## 匯出範圍
 
