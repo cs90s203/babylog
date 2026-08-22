@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.35.1';
+const APP_VERSION = '2.36.0';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -62,6 +62,7 @@ const App = {
     showDiagnostics: false, // 設定 → 診斷資訊 panel, see diagnosticsText()
     familySwitcherOpen: false, // "切換寶寶" modal in 設定, see renderFamilySwitcher
     familySwitcherLabels: {}, // familyId -> {babyName, babyEmoji}, filled in as fetchFamilyLabel resolves
+    familyChoiceLabels: {}, // same shape, for the mandatory first-time picker — see renderFamilyChoice / Sync.state === "choosing-family"
   },
   _toastTimer: null,
   _pressTimer: null,
@@ -99,6 +100,24 @@ const App = {
     this.state.sleep = this._loadSleep(); // resume a sleep session left running before reload/close
     Store.onChange(() => this.rerender());
     Sync.onChange(() => this.rerender());
+    // Kick off label loading exactly once per "choosing-family" episode (not once per
+    // rerender while it's showing) — same fetchFamilyLabel used by the optional family
+    // switcher, just triggered by an auth-state transition instead of a button tap.
+    Sync.onChange(() => {
+      if (Sync.state === 'choosing-family') {
+        if (this._familyChoiceStarted) return;
+        this._familyChoiceStarted = true;
+        this.state.familyChoiceLabels = {};
+        (Sync.availableFamilyIds || []).forEach((id) => {
+          Sync.fetchFamilyLabel(id).then((label) => {
+            this.state.familyChoiceLabels = Object.assign({}, this.state.familyChoiceLabels, { [id]: label });
+            this.rerender();
+          });
+        });
+      } else {
+        this._familyChoiceStarted = false; // reset so a later sign-in can trigger this again
+      }
+    });
     // Same reasoning for the other direction: a failed cloud push means this record exists
     // only on this phone. Silently logging that is what let a day's records go unbacked-up
     // (see CHANGELOG 2.33.4), so tell the user the moment it happens.
@@ -1095,6 +1114,10 @@ const App = {
   },
   signIn() { Sync.signInWithGoogle(); },
   signOut() { Sync.signOut(); },
+
+  // Mandatory first-time pick for a multi-family account with no stored device preference —
+  // see renderFamilyChoice / Sync.state === "choosing-family".
+  chooseFamily(id) { Sync.chooseFamily(id); },
 
   // "切換寶寶" — only meaningful once an account belongs to more than one family (see
   // renderFamilySwitchButton in views.js, which keeps the button disabled otherwise).

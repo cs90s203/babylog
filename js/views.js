@@ -2446,6 +2446,34 @@ function renderWelcome(state) {
   </div>`;
 }
 
+// Mandatory first-time pick for a multi-family account with no stored device preference yet
+// (see the INCIDENT note on Sync's onAuthStateChanged) — unlike renderFamilySwitcher, this
+// has no dismiss/close affordance: the account genuinely isn't bound to any family's data yet,
+// so there's nothing sensible to show underneath until this is answered. Labeled by each
+// family's actual baby name/emoji, never the internal "default"/"friendA" id, so there's no
+// ambiguity about which baby's data each choice actually is.
+function renderFamilyChoice(state) {
+  if (Sync.state !== 'choosing-family') return '';
+  const ids = Sync.availableFamilyIds || [];
+  const labels = state.familyChoiceLabels || {};
+  const rows = ids.map((id) => {
+    const lbl = labels[id];
+    const name = lbl ? (lbl.babyName || '未命名寶寶') : '載入中…';
+    const emoji = (lbl && lbl.babyEmoji) || '👶';
+    return `<button onclick="A.chooseFamily('${id}')" style="width:100%;display:flex;align-items:center;gap:12px;padding:14px;border-radius:16px;border:1.5px solid var(--inpBorder);background:transparent;margin-bottom:10px;text-align:left;">
+      <span style="font-size:26px;">${emoji}</span>
+      <span style="flex:1;font-size:15px;font-weight:700;color:var(--text);">${esc(name)}</span>
+    </button>`;
+  }).join('');
+  return `<div style="position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.55);backdrop-filter:blur(8px);z-index:111;display:flex;align-items:center;justify-content:center;padding:24px;">
+    <div style="background:var(--card);border-radius:28px;padding:28px 24px 22px;width:300px;box-shadow:0 24px 80px var(--shadow2);animation:pop .35s cubic-bezier(.17,.67,.32,1.2);">
+      <div style="font-size:46px;margin-bottom:10px;text-align:center;">👶</div>
+      <h2 style="font-size:19px;font-weight:800;color:var(--text);margin-bottom:6px;text-align:center;">這支手機要看哪個寶寶？</h2>
+      <p style="font-size:12.5px;color:var(--text2);margin-bottom:18px;line-height:1.5;text-align:center;">這個帳號同時屬於多個寶寶的家庭，選一個開始——之後可以在設定裡隨時切換。</p>
+      ${rows}
+    </div>
+  </div>`;
+}
 function renderToast(state) {
   const t = state.toast;
   if (!t) return '';
@@ -2609,6 +2637,7 @@ function render(state) {
     ${renderDeleteGrowthConfirm(state)}
     ${renderRenameConfirm(state)}
     ${renderWelcome(state)}
+    ${renderFamilyChoice(state)}
     ${renderFamilySwitcher(state)}
     ${renderNurseTutorial(state)}
     ${renderCelebration(state)}

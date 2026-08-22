@@ -126,6 +126,21 @@ const Sync = {
           // match. For an account that has only ever belonged to one family, famIds[0] IS
           // that family, so this is a no-op for the common case.
           const pref = Store.local("family_id");
+          // INCIDENT (2026-08): a caregiver who genuinely belongs to more than one family
+          // (e.g. a 月嫂 helping two households) got silently defaulted to whichever family
+          // happens to be listed first in FAMILIES, on any device with no prior preference —
+          // no indication which baby's data that even was. She kept using the app normally
+          // (records save locally regardless), so nothing looked broken on her end, while the
+          // family she actually meant to help never saw anything from her. Binding to the
+          // wrong family isn't a guess this code should make silently — ask instead, labeled
+          // by baby name/emoji (not the internal "default"/"friendA" ids), and only once per
+          // device (this becomes tomorrow's "pref" the moment she answers).
+          if (famIds.length > 1 && !(pref && famIds.includes(pref))) {
+            currentFamilyId = null;
+            this.familyId = null;
+            this._set("choosing-family");
+            return;
+          }
           currentFamilyId = (pref && famIds.includes(pref)) ? pref : famIds[0];
           this.familyId = currentFamilyId;
           Store.bindFamily(currentFamilyId);
@@ -154,6 +169,19 @@ const Sync = {
     }
   },
 
+  // Resolves the "choosing-family" pending state (see onAuthStateChanged) — the one-time
+  // explicit pick for a multi-family account with no stored device preference yet. Once
+  // chosen, bindFamily() persists it as this device's preference, so this never fires again
+  // for the same account+device unless site data is cleared.
+  chooseFamily(id) {
+    if (this.state !== "choosing-family" || !this.availableFamilyIds.includes(id)) return;
+    currentFamilyId = id;
+    this.familyId = id;
+    Store.bindFamily(id);
+    this._pushAllLocal();
+    this._attachListeners();
+    this._set("syncing");
+  },
   // Move the signed-in account from its current family to another one it also belongs to
   // (see renderFamilySwitchButton/renderFamilySwitcher in views.js). No-op for an id the
   // account doesn't have access to, or the family it's already on.
