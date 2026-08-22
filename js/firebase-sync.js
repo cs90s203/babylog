@@ -371,7 +371,21 @@ const Sync = {
     // no-op for the one case it exists for. Each listener only needs to know about itself.
     let eventsSeenFirst = false, growthSeenFirst = false, settingsSeenFirst = false;
 
+    // includeMetadataChanges matters here: WITHOUT it, Firestore suppresses the snapshot
+    // that fires when the server confirms the initial cache-served result with IDENTICAL
+    // data — that confirmation is a metadata-only change (fromCache true→false, nothing in
+    // the documents themselves). So on any quiet open (no new records arriving), the app
+    // received exactly one snapshot — the cache one — and the "同步狀態確認中" pill sat
+    // there forever with no second event to clear it, even though the connection was fine
+    // (observed on a real device 2026-08: sync fully working both directions, pill never
+    // turning green). With the option on, that confirmation is actually delivered and
+    // _noteSnapshotSource sees fromCache=false within seconds of load. docChanges() called
+    // with no arguments still returns only REAL data changes, so the merge/push paths see
+    // exactly what they saw before, and metadata events are client-side state — no extra
+    // Firestore reads billed.
+    const META = { includeMetadataChanges: true };
     unsubEvents = fbDb.collection(`${familyPath()}/events`).onSnapshot(
+      META,
       (snap) => {
         this._noteSnapshotSource(snap);
         const changed = Store.mergeRemoteBatch("events", snap.docChanges().map((c) => ({ id: c.doc.id, ...c.doc.data() })));
@@ -382,6 +396,7 @@ const Sync = {
       (err) => this._onListenerError(err)
     );
     unsubGrowth = fbDb.collection(`${familyPath()}/growth`).onSnapshot(
+      META,
       (snap) => {
         this._noteSnapshotSource(snap);
         const changed = Store.mergeRemoteBatch("growth", snap.docChanges().map((c) => ({ id: c.doc.id, ...c.doc.data() })));
@@ -392,6 +407,7 @@ const Sync = {
       (err) => this._onListenerError(err)
     );
     unsubSettings = fbDb.doc(`${familyPath()}/settings/main`).onSnapshot(
+      META,
       (doc) => {
         this._noteSnapshotSource(doc);
         const changed = doc.exists && Store.mergeRemoteSettings(doc.data());
