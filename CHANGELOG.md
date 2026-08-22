@@ -3,6 +3,20 @@
 版號規則跟 JPL（日語學習 App）主 dev 對話一致：`MAJOR.MINOR.PATCH`——新功能升 MINOR、
 架構級的重大改動升 MAJOR、bug 修正/小改善升 PATCH。版本號顯示在設定頁最下方。
 
+## v2.36.2 — 2026-08-20
+
+**把 snowy5420@gmail.com 加入 friendA 家庭**
+
+- 前端白名單（`FAMILIES.friendA`）與 `firestore.rules` 的 `isFriendAFamily()` 同步
+  加入（一律小寫，配合 `.lower()` 正規化比對）。
+- **需要在 Firebase Console 重新發布規則才會生效**——repo 裡的 `firestore.rules`
+  只是版本控制的副本，不會自動部署（2.33.6 那次就是漏了這步，這次不要再漏）。
+- snowy5420 原本已綁定 default 家庭的裝置**不會**跳出選家庭畫面（本機已有有效偏好，
+  照舊直接進 default），要看 friendA 時用「設定 → 切換寶寶」切換即可。
+- 實測驗證：`familyIdsForEmail('snowy5420@gmail.com')` 正確回傳
+  `["default","friendA"]`，大小寫變體（Snowy5420@Gmail.com）解析結果一致，
+  其他成員的家庭歸屬不受影響。
+
 ## v2.36.1 — 2026-08-20
 
 **修復：「同步狀態確認中」永遠不會變成已連線——伺服器確認事件根本沒被送達**

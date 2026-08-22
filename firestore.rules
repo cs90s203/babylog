@@ -22,7 +22,8 @@ service cloud.firestore {
           'phoebe790322@gmail.com',
           'jumptoohigh@gmail.com',
           'lunamamahappy@gmail.com',
-          'cs90s203@gmail.com'
+          'cs90s203@gmail.com',
+          'snowy5420@gmail.com'
         ];
     }
     function isFriendBFamily() {

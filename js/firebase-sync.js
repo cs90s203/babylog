@@ -28,7 +28,7 @@ const firebaseConfig = {
 // per device); it no longer is.
 const FAMILIES = {
   default: ["cs90s203@gmail.com", "snowy5420@gmail.com", "lunamamahappy@gmail.com"],
-  friendA: ["phoebe790322@gmail.com", "jumptoohigh@gmail.com", "lunamamahappy@gmail.com", "cs90s203@gmail.com"],
+  friendA: ["phoebe790322@gmail.com", "jumptoohigh@gmail.com", "lunamamahappy@gmail.com", "cs90s203@gmail.com", "snowy5420@gmail.com"],
   friendB: ["sanan282000@gmail.com"],
   friendC: ["jennifer90131@gmail.com", "s95321053@gmail.com"],
 };
