@@ -48,6 +48,12 @@ function defaultData() {
       babySex: '',
       babyEmoji: '👶',
       babyPhoto: '', // compressed base64 JPEG thumbnail; takes precedence over babyEmoji when set
+      // Separate from babyEmoji/babyPhoto on purpose — the home-screen icon (see
+      // App._updateHomeScreenIcon) is its own concern from the baby avatar shown inside the
+      // app, so families can set one without touching the other. Empty means "use the
+      // shipped default" (icons/*.png, orange background + 👶), not "same as the avatar".
+      appIconEmoji: '',
+      appIconPhoto: '',
       duration: {
         milk: { mode: 'end', minutes: 15 },
         poop: { mode: 'end', minutes: 15 },

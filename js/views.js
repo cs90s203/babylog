@@ -24,6 +24,12 @@ function babyAvatarInner(s, sizePx) {
   if (s.babyPhoto) return `<img src="${s.babyPhoto}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" />`;
   return `<span style="font-size:${Math.round(sizePx * 0.46)}px;">${esc(s.babyEmoji || '👶')}</span>`;
 }
+// App icon (home-screen icon) preview — separate setting from the baby avatar above (see
+// App._updateHomeScreenIcon); unset appIconEmoji/appIconPhoto shows the shipped default look.
+function appIconInner(s, sizePx) {
+  if (s.appIconPhoto) return `<img src="${s.appIconPhoto}" style="width:100%;height:100%;object-fit:cover;border-radius:22%;" />`;
+  return `<span style="font-size:${Math.round(sizePx * 0.46)}px;">${esc(s.appIconEmoji || '👶')}</span>`;
+}
 
 // ============================= THEME =============================
 function applyTheme(state) {
@@ -2072,6 +2078,17 @@ function renderSettings(state) {
       </div>
     </div>
     <div style="padding:18px 16px 0;">
+      ${sectionLabel('手機主畫面圖示')}
+      <button onclick="A.openAppIconPicker()" class="card" style="width:100%;padding:16px;display:flex;align-items:center;gap:14px;text-align:left;border:none;">
+        <span style="width:48px;height:48px;border-radius:15px;background:${s.appIconPhoto ? 'transparent' : '#F0A500'};display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;box-shadow:0 4px 14px rgba(240,165,0,.25);">${appIconInner(s, 48)}</span>
+        <span style="flex:1;min-width:0;">
+          <span style="display:block;font-size:14px;font-weight:700;color:var(--text);margin-bottom:2px;">iPhone「加入主畫面」的圖示</span>
+          <span style="display:block;font-size:11px;color:var(--text3);line-height:1.4;">跟寶寶頭像分開設定，可以換成自己想用的圖案</span>
+        </span>
+        <span style="font-size:13px;color:var(--text2);">›</span>
+      </button>
+    </div>
+    <div style="padding:18px 16px 0;">
       ${sectionLabel('事件時長')}
       <div class="card" style="padding:6px 16px;">
         <p style="font-size:11px;color:var(--text3);padding:10px 0 4px;line-height:1.5;">用於匯出日曆時決定事件起訖。<b style="color:var(--text2);">結束</b>=事件時間當結束往前推；<b style="color:var(--text2);">開始</b>=當開始往後推；分鐘設 0 即起訖相同。</p>
@@ -2381,6 +2398,32 @@ function renderAvatarSheet(state, reopen) {
     </div>
   </div>`;
 }
+function renderAppIconSheet(state, reopen) {
+  const s = Store.data.settings;
+  const isDefault = !s.appIconPhoto && !s.appIconEmoji;
+  const emojiGrid = AVATAR_EMOJIS.map(e => {
+    const active = !s.appIconPhoto && s.appIconEmoji === e;
+    return `<button onclick="A.setAppIconEmoji('${e}')" style="width:42px;height:42px;border-radius:50%;border:${active ? '2px solid var(--accent)' : 'none'};background:var(--card2);font-size:21px;display:flex;align-items:center;justify-content:center;">${e}</button>`;
+  }).join('');
+  return `<div class="sheet-overlay" onclick="A.closeSheet()">
+    <div class="sheet" onclick="event.stopPropagation()" onpointerdown="A.startSheetDrag(event)" style="${sheetAnim(reopen)}">
+      <div class="sheet-handle"></div>
+      <h2 style="font-size:23px;font-weight:800;margin-bottom:4px;color:var(--text);">手機主畫面圖示</h2>
+      <p style="font-size:11px;color:var(--text3);margin-bottom:16px;line-height:1.5;">跟上面的寶寶頭像分開設定——這裡只影響「加入主畫面」看到的 App 圖示，不會改到 App 裡顯示的寶寶頭像。</p>
+      <div style="display:flex;justify-content:center;margin-bottom:8px;">
+        <div style="width:74px;height:74px;border-radius:22px;background:${s.appIconPhoto ? 'transparent' : '#F0A500'};display:flex;align-items:center;justify-content:center;overflow:hidden;">${appIconInner(s, 74)}</div>
+      </div>
+      ${isDefault ? `<p style="text-align:center;font-size:11px;color:var(--text3);margin-bottom:14px;">目前使用預設圖示</p>` : ''}
+      <p style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;">選 Emoji</p>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:18px;">${emojiGrid}</div>
+      <input id="f-appicon-file" type="file" accept="image/*" style="display:none;" onchange="A.handleAppIconFile(this.files[0])" />
+      <button onclick="document.getElementById('f-appicon-file').click()" style="width:100%;background:var(--card2);border:1.5px dashed var(--inpBorder);border-radius:16px;padding:14px;font-size:14px;font-weight:700;color:var(--text2);margin-bottom:8px;">📷 上傳照片</button>
+      ${s.appIconPhoto ? `<button onclick="A.removeAppIconPhoto()" style="width:100%;background:transparent;border:none;padding:10px;font-size:13px;font-weight:700;color:#E5573D;">移除照片，改用 Emoji</button>` : ''}
+      ${!isDefault ? `<button onclick="A.resetAppIcon()" style="width:100%;background:transparent;border:none;padding:10px;font-size:13px;font-weight:700;color:var(--text2);">↺ 重設為預設圖示</button>` : ''}
+      <button onclick="A.closeSheet()" class="text-btn">關閉</button>
+    </div>
+  </div>`;
+}
 
 function renderDeleteConfirm(state) {
   const rec = Store.data.events.find(e => e.id === state.confirmDelId);
@@ -2522,6 +2565,7 @@ function renderSheet(state) {
   if (state.sheet === 'editRec') return renderEditRecSheet(state, reopen);
   if (state.sheet === 'growth') return renderGrowthSheet(state, reopen);
   if (state.sheet === 'avatar') return renderAvatarSheet(state, reopen);
+  if (state.sheet === 'appIcon') return renderAppIconSheet(state, reopen);
   return '';
 }
 function sheetAnim(reopen) { return reopen ? 'animation:none;' : ''; }

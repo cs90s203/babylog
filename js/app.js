@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.37.1';
+const APP_VERSION = '2.37.2';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -1040,11 +1040,40 @@ const App = {
   setBabyEmoji(e) { Store.updateSettings({ babyEmoji: e, babyPhoto: '' }); this.set({ sheet: null }); },
   removeBabyPhoto() { Store.updateSettings({ babyPhoto: '' }); this.set({ sheet: null }); },
 
-  // ---- home-screen icon: iOS only reads apple-touch-icon at the moment "加入主畫面" is
-  // tapped, not from the shipped PNG on disk, so redrawing the <link> hrefs here — from the
-  // signed-in family's own babyEmoji/babyPhoto — lets each family get their own icon instead
-  // of everyone sharing one fixed image. The shipped icons/*.png files stay the default:
-  // whatever's visible before Store's settings load, and whenever no photo/custom emoji is set. ----
+  // ---- app icon (home-screen icon): separate setting from the baby avatar (appIconEmoji/
+  // appIconPhoto, not babyEmoji/babyPhoto) — see renderAppIconSheet. ----
+  openAppIconPicker() { this.set({ sheet: 'appIcon' }); },
+  setAppIconEmoji(e) { Store.updateSettings({ appIconEmoji: e, appIconPhoto: '' }); this.set({ sheet: null }); },
+  removeAppIconPhoto() { Store.updateSettings({ appIconPhoto: '' }); this.set({ sheet: null }); },
+  resetAppIcon() { Store.updateSettings({ appIconEmoji: '', appIconPhoto: '' }); this.set({ sheet: null }); },
+  handleAppIconFile(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onerror = () => { console.error('App icon file read failed:', reader.error); this.toast('⚠️', '照片讀取失敗，請換一張再試'); };
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onerror = () => { console.error('App icon image decode failed'); this.toast('⚠️', '照片格式無法辨識，請換一張再試'); };
+      img.onload = () => {
+        const SIZE = 512; // larger than the avatar thumbnail -- this gets upscaled to a real home-screen icon, not just a small in-app circle
+        const canvas = document.createElement('canvas');
+        canvas.width = SIZE; canvas.height = SIZE;
+        const ctx = canvas.getContext('2d');
+        const side = Math.min(img.width, img.height);
+        const sx = (img.width - side) / 2, sy = (img.height - side) / 2;
+        ctx.drawImage(img, sx, sy, side, side, 0, 0, SIZE, SIZE);
+        Store.updateSettings({ appIconPhoto: canvas.toDataURL('image/jpeg', 0.85), appIconEmoji: '' });
+        this.set({ sheet: null });
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  },
+
+  // ---- home-screen icon rendering: iOS only reads apple-touch-icon at the moment "加入
+  // 主畫面" is tapped, not from the shipped PNG on disk, so redrawing the <link> hrefs here —
+  // from the family's own appIconEmoji/appIconPhoto above — lets each family get their own
+  // icon instead of everyone sharing one fixed image. The shipped icons/*.png files stay the
+  // default: whatever's visible before Store's settings load, and whenever appIcon* is unset. ----
   _iconKey: null,
   _drawHomeIcon(size, babyEmoji, img) {
     const canvas = document.createElement('canvas');
@@ -1076,20 +1105,20 @@ const App = {
   _updateHomeScreenIcon() {
     const s = Store.data && Store.data.settings;
     if (!s) return;
-    const key = (s.babyPhoto || '') + '|' + (s.babyEmoji || '');
+    const key = (s.appIconPhoto || '') + '|' + (s.appIconEmoji || '');
     if (this._iconKey === key) return;
     this._iconKey = key;
     const apply = (img) => {
       [152, 167, 180].forEach((size) => {
         const link = document.getElementById('icon-' + size);
-        if (link) link.href = this._drawHomeIcon(size, s.babyEmoji, img);
+        if (link) link.href = this._drawHomeIcon(size, s.appIconEmoji || '👶', img);
       });
     };
-    if (s.babyPhoto) {
+    if (s.appIconPhoto) {
       const img = new Image();
       img.onload = () => apply(img);
       img.onerror = () => apply(null); // corrupt/undecodable photo -- fall back to the emoji design rather than leaving stale icons
-      img.src = s.babyPhoto;
+      img.src = s.appIconPhoto;
     } else {
       apply(null);
     }
