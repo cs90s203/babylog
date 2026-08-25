@@ -2087,6 +2087,9 @@ function renderSettings(state) {
         </span>
         <span style="font-size:13px;color:var(--text2);">›</span>
       </button>
+      <p style="font-size:10.5px;color:var(--text3);margin-top:10px;line-height:1.6;padding:0 2px;">iOS 限制：已經加到主畫面的舊捷徑不會自動換圖示，換好之後要照這樣做才看得到新的——
+        <b style="color:var(--text2);">① 長按主畫面上的舊圖示 → 移除 App → 刪除</b>（只是移除捷徑，雲端資料不會受影響）
+        <b style="color:var(--text2);">② 用 Safari 開這個網站 → 下方分享圖示 → 加入主畫面</b></p>
     </div>
     <div style="padding:18px 16px 0;">
       ${sectionLabel('事件時長')}
