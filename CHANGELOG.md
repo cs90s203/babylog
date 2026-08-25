@@ -3,6 +3,20 @@
 版號規則跟 JPL（日語學習 App）主 dev 對話一致：`MAJOR.MINOR.PATCH`——新功能升 MINOR、
 架構級的重大改動升 MAJOR、bug 修正/小改善升 PATCH。版本號顯示在設定頁最下方。
 
+## v2.37.0 — 2026-08-25
+
+**iPhone「加入主畫面」自訂圖示**
+
+- 原因：iOS Safari 的「加入主畫面」完全不讀 `manifest.webmanifest`，只認
+  `<link rel="apple-touch-icon">`，而且必須是真的點陣 PNG（原本用的是 SVG data-URI
+  favicon，iOS 讀不到，於是退回抓網頁截圖當圖示，看起來就像通用的 web/emoji 縮圖）。
+- 新增 `icons/` 目錄，內含沿用原本橘底 👶 設計（`#F0A500` 圓角方形）產出的多尺寸
+  PNG（32/152/167/180/192/512/1024），`index.html` 加上對應的 `apple-touch-icon`
+  link tag；`manifest.webmanifest` 的 icons 也一併換成真正的 PNG（原本的 100×100
+  SVG 對 Android/桌面安裝的圖示品質也不夠）。
+- 已安裝到主畫面的舊捷徑不會自動換圖示——iOS 只在「加入主畫面」當下讀取一次，
+  需要先移除舊的再重新加入才會套用新圖示。
+
 ## v2.36.2 — 2026-08-20
 
 **把 snowy5420@gmail.com 加入 friendA 家庭**
