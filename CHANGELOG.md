@@ -3,17 +3,24 @@
 版號規則跟 JPL（日語學習 App）主 dev 對話一致：`MAJOR.MINOR.PATCH`——新功能升 MINOR、
 架構級的重大改動升 MAJOR、bug 修正/小改善升 PATCH。版本號顯示在設定頁最下方。
 
-## v2.37.0 — 2026-08-25
+## v2.37.1 — 2026-08-25
 
-**iPhone「加入主畫面」自訂圖示**
+**主畫面圖示改成跟著各家庭自己的寶寶頭像走，不是全部人共用同一張固定圖**
 
+- v2.37.0 的做法是把一張寫死的橘底 👶 PNG 放進 repo，所有帳號、所有家庭看到的
+  「加入主畫面」圖示都一樣——但每個家庭本來就已經有自己的寶寶頭像設定
+  （`babyEmoji`／`babyPhoto`，設定 → 寶寶頭像，見 `renderAvatarSheet`），圖示
+  應該直接沿用這個既有設定，而不是另外弄一套固定圖。
+- 新增 `App._updateHomeScreenIcon()`：用 canvas 在瀏覽器端即時畫出圖示（有
+  `babyPhoto` 就裁成圓角方形照片，沒有就用 `babyEmoji`＋橘底，跟 v2.37.0
+  的預設設計相同），畫完直接覆蓋 `<link rel="apple-touch-icon">` 的 href。
+  Store 的設定一變（換 emoji、換照片、切換家庭）就會自動重畫，一次做完不用
+  再回來改；`icons/` 目錄裡的 PNG 檔案還留著，純粹是 Store 設定還沒讀進來前
+  的 fallback 預設值。
 - 原因：iOS Safari 的「加入主畫面」完全不讀 `manifest.webmanifest`，只認
-  `<link rel="apple-touch-icon">`，而且必須是真的點陣 PNG（原本用的是 SVG data-URI
-  favicon，iOS 讀不到，於是退回抓網頁截圖當圖示，看起來就像通用的 web/emoji 縮圖）。
-- 新增 `icons/` 目錄，內含沿用原本橘底 👶 設計（`#F0A500` 圓角方形）產出的多尺寸
-  PNG（32/152/167/180/192/512/1024），`index.html` 加上對應的 `apple-touch-icon`
-  link tag；`manifest.webmanifest` 的 icons 也一併換成真正的 PNG（原本的 100×100
-  SVG 對 Android/桌面安裝的圖示品質也不夠）。
+  `<link rel="apple-touch-icon">`，而且必須是真的點陣 PNG，讀取時機是使用者
+  實際按下「加入主畫面」那一刻的 DOM 狀態（不是頁面載入當下的寫死 HTML）——
+  這也是為什麼在瀏覽器端動態改寫這個 href 有效。
 - 已安裝到主畫面的舊捷徑不會自動換圖示——iOS 只在「加入主畫面」當下讀取一次，
   需要先移除舊的再重新加入才會套用新圖示。
 

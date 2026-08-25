@@ -2,7 +2,7 @@
 
 // Bump per CHANGELOG.md: patch = fixes/tweaks, minor = new features, major = architecture
 // changes (e.g. the GitHub->Firebase sync swap). Shown at the bottom of the settings page.
-const APP_VERSION = '2.37.0';
+const APP_VERSION = '2.37.1';
 
 function todayStr(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -98,7 +98,8 @@ const App = {
     this.state.showWelcome = !Store.caregiver;
     this.state.nurse = this._loadNurse(); // resume a nursing session left running before reload/close
     this.state.sleep = this._loadSleep(); // resume a sleep session left running before reload/close
-    Store.onChange(() => this.rerender());
+    Store.onChange(() => { this.rerender(); this._updateHomeScreenIcon(); });
+    this._updateHomeScreenIcon(); // Store.onChange only fires on later changes, not this initial load
     Sync.onChange(() => this.rerender());
     // Kick off label loading exactly once per "choosing-family" episode (not once per
     // rerender while it's showing) — same fetchFamilyLabel used by the optional family
@@ -1038,6 +1039,61 @@ const App = {
   openAvatarPicker() { this.set({ sheet: 'avatar' }); },
   setBabyEmoji(e) { Store.updateSettings({ babyEmoji: e, babyPhoto: '' }); this.set({ sheet: null }); },
   removeBabyPhoto() { Store.updateSettings({ babyPhoto: '' }); this.set({ sheet: null }); },
+
+  // ---- home-screen icon: iOS only reads apple-touch-icon at the moment "加入主畫面" is
+  // tapped, not from the shipped PNG on disk, so redrawing the <link> hrefs here — from the
+  // signed-in family's own babyEmoji/babyPhoto — lets each family get their own icon instead
+  // of everyone sharing one fixed image. The shipped icons/*.png files stay the default:
+  // whatever's visible before Store's settings load, and whenever no photo/custom emoji is set. ----
+  _iconKey: null,
+  _drawHomeIcon(size, babyEmoji, img) {
+    const canvas = document.createElement('canvas');
+    canvas.width = size; canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    const r = size * 0.2;
+    ctx.beginPath();
+    ctx.moveTo(r, 0);
+    ctx.arcTo(size, 0, size, size, r);
+    ctx.arcTo(size, size, 0, size, r);
+    ctx.arcTo(0, size, 0, 0, r);
+    ctx.arcTo(0, 0, size, 0, r);
+    ctx.closePath();
+    if (img) {
+      ctx.save();
+      ctx.clip();
+      ctx.drawImage(img, 0, 0, size, size);
+      ctx.restore();
+    } else {
+      ctx.fillStyle = '#F0A500';
+      ctx.fill();
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = Math.round(size * 0.62) + 'px "Apple Color Emoji", sans-serif';
+      ctx.fillText(babyEmoji || '👶', size / 2, size * 0.57);
+    }
+    return canvas.toDataURL('image/png');
+  },
+  _updateHomeScreenIcon() {
+    const s = Store.data && Store.data.settings;
+    if (!s) return;
+    const key = (s.babyPhoto || '') + '|' + (s.babyEmoji || '');
+    if (this._iconKey === key) return;
+    this._iconKey = key;
+    const apply = (img) => {
+      [152, 167, 180].forEach((size) => {
+        const link = document.getElementById('icon-' + size);
+        if (link) link.href = this._drawHomeIcon(size, s.babyEmoji, img);
+      });
+    };
+    if (s.babyPhoto) {
+      const img = new Image();
+      img.onload = () => apply(img);
+      img.onerror = () => apply(null); // corrupt/undecodable photo -- fall back to the emoji design rather than leaving stale icons
+      img.src = s.babyPhoto;
+    } else {
+      apply(null);
+    }
+  },
   // Resizes/crops to a small square JPEG before storing — this goes straight into the
   // settings document (synced as plain JSON, same as everything else), so it needs to stay
   // well under Firestore's 1MB document limit and not bloat every settings sync. A proper
