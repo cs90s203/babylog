@@ -354,6 +354,20 @@ const Sync = {
   _retryTimer: null,
   _attachListeners() {
     this._detachListeners();
+    // INCIDENT (2026-08-25): switchFamily/chooseFamily rebind Store.data to the new family
+    // (Store.bindFamily) BEFORE this runs, but the Firestore SDK can still deliver one more
+    // snapshot from the OLD family's listener after unsubscribe() has been called — the SDK
+    // processes "stop listening" through its own internal async queue, so a snapshot that was
+    // already in flight when the switch happened is not retroactively cancelled. That
+    // straggler snapshot's callback used to run with no idea it belonged to a listener
+    // generation that no longer matches the current family, merging the OLD family's growth/
+    // events straight into the NEW family's Store.data (records are matched purely by id — see
+    // Store._mergeOne — with no family field to catch the mismatch), and persist() then wrote
+    // that contamination to the new family's own local cache. Reused the _resyncToken counter
+    // _detachListeners() already bumps (previously only checked by forceResync's async tail)
+    // as a generation guard here too: each callback below captures the token active on ITS
+    // attach and refuses to merge if a later _detachListeners() has since moved it on.
+    const myToken = this._resyncToken;
     clearTimeout(this._retryTimer);
     let pending = 3;
     const settled = () => {
@@ -387,6 +401,7 @@ const Sync = {
     unsubEvents = fbDb.collection(`${familyPath()}/events`).onSnapshot(
       META,
       (snap) => {
+        if (myToken !== this._resyncToken) return; // straggler from a listener generation that's since been superseded — see the note above
         this._noteSnapshotSource(snap);
         const changed = Store.mergeRemoteBatch("events", snap.docChanges().map((c) => ({ id: c.doc.id, ...c.doc.data() })));
         if (changed && eventsSeenFirst) this._noteLiveConnectionConfirmed();
@@ -398,6 +413,7 @@ const Sync = {
     unsubGrowth = fbDb.collection(`${familyPath()}/growth`).onSnapshot(
       META,
       (snap) => {
+        if (myToken !== this._resyncToken) return; // straggler from a listener generation that's since been superseded — see the note above
         this._noteSnapshotSource(snap);
         const changed = Store.mergeRemoteBatch("growth", snap.docChanges().map((c) => ({ id: c.doc.id, ...c.doc.data() })));
         if (changed && growthSeenFirst) this._noteLiveConnectionConfirmed();
@@ -409,6 +425,7 @@ const Sync = {
     unsubSettings = fbDb.doc(`${familyPath()}/settings/main`).onSnapshot(
       META,
       (doc) => {
+        if (myToken !== this._resyncToken) return; // straggler from a listener generation that's since been superseded — see the note above
         this._noteSnapshotSource(doc);
         const changed = doc.exists && Store.mergeRemoteSettings(doc.data());
         if (changed && settingsSeenFirst) this._noteLiveConnectionConfirmed();

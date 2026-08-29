@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8">
+<title>家庭切換時的殘留 snapshot 測試</title>
+<style>body{font-family:monospace;white-space:pre-wrap;padding:20px;font-size:14px;}.pass{color:#2a7;}.fail{color:#e33;font-weight:bold;}</style>
+</head>
+<body>
+<!--
+  Regression test for the 2026-08-25 incident: switchFamily/chooseFamily rebind Store.data to
+  the new family BEFORE _attachListeners() gets around to unsubscribing the OLD family's
+  listeners. The real Firestore SDK can still deliver one more snapshot from an already-
+  detached listener (its "stop listening" goes through the SDK's own internal async queue, so
+  a snapshot already in flight isn't retroactively cancelled) -- that straggler used to merge
+  straight into whatever family Store.data now points at.
+
+  The existing tools/twodevice-sync-test.html does NOT cover this: it replaces
+  Sync._attachListeners/_detachListeners with simplified fakes that don't carry the real
+  _resyncToken guard at all, so it can pass even if this guard were completely removed. This
+  file exercises the REAL _attachListeners/_detachListeners/switchFamily from firebase-sync.js
+  with a fake fbDb that lets the test hold on to an old listener's callback and invoke it AFTER
+  the family switch has completed, simulating exactly the straggler-delivery race.
+-->
+<div id="out"></div>
+<iframe id="dev" style="display:none;"></iframe>
+<script>
+const out = document.getElementById('out');
+const log = [];
+function say(s, cls) { log.push(cls ? `<span class="${cls}">${s}</span>` : s); out.innerHTML = log.join('\n'); }
+function check(name, cond, detail) { say((cond ? '✓ PASS  ' : '✗ FAIL  ') + name + (detail ? '   → ' + detail : ''), cond ? 'pass' : 'fail'); return cond; }
+
+const base = location.origin;
+const bust = '?t=' + Date.now(); // dev server sends no cache-control -- without this the browser can keep serving a stale copy across reloads
+const frameHtml = `<!DOCTYPE html><html><head></head><body><div id="root"></div>
+<script src="${base}/js/who-data.js${bust}"><\/script>
+<script src="${base}/js/predict.js${bust}"><\/script>
+<script src="${base}/js/store.js${bust}"><\/script>
+<script src="${base}/js/csv.js${bust}"><\/script>
+<script src="${base}/js/firebase-sync.js${bust}"><\/script>
+</body></html>`;
+
+async function run() {
+  // The iframe below (srcdoc, no sandbox) shares this page's real localStorage -- without
+  // clearing the family-scoped keys first, a PREVIOUS run's leaked "stale-growth-from-A"
+  // record would still be sitting in bt_data::friendA and get reloaded by Store.bindFamily,
+  // making this test look like it's failing even when the guard is correctly blocking new
+  // leaks. This only touches this dev server's localhost:8793 origin, never production.
+  for (let i = localStorage.length - 1; i >= 0; i--) {
+    const k = localStorage.key(i);
+    if (k && k.indexOf('bt_data') === 0) localStorage.removeItem(k);
+  }
+  const frame = document.getElementById('dev');
+  await new Promise((resolve) => { frame.onload = resolve; frame.srcdoc = frameHtml; });
+  const win = frame.contentWindow;
+  const { Store, Sync } = win.eval('({ Store: Store, Sync: Sync })');
+
+  // Fake Firestore: each collection/doc path gets its own listener registry. onSnapshot
+  // returns an unsubscribe that just removes the callback from that registry -- exactly the
+  // real SDK's contract as far as this app's code can tell, EXCEPT the test can still invoke
+  // an already-"unsubscribed" callback directly, standing in for the real SDK's internal
+  // async-queue race that makes a truly-in-flight snapshot un-cancellable.
+  const registries = {}; // path -> [{cb, live}]
+  function makeRef(path) {
+    return {
+      onSnapshot(opts, cb, errCb) {
+        const entry = { cb, live: true };
+        (registries[path] = registries[path] || []).push(entry);
+        return () => { entry.live = false; };
+      },
+    };
+  }
+  // Assign fbDb directly via the frame's own function objects (closures can't cross the eval
+  // string boundary above), same top-level-`let`-is-shared-lexical-scope mechanism the
+  // existing twodevice-sync-test.html relies on for Store/Sync.
+  win.fbDb_test_collection = (p) => makeRef(p);
+  win.fbDb_test_doc = (p) => makeRef(p);
+  win.eval('fbDb = { collection: fbDb_test_collection, doc: fbDb_test_doc, disableNetwork: () => Promise.resolve(), enableNetwork: () => Promise.resolve() };');
+  win.eval('currentFamilyId = "default";');
+  Sync.user = { email: 'cs90s203@test', displayName: 'cs90s203', photoURL: '' };
+  Sync.familyId = 'default';
+  Sync.availableFamilyIds = ['default', 'friendA'];
+  Sync.pushDoc = () => {};
+  Sync.pushSettings = () => {};
+  Sync._pushAllLocal = () => {};
+  Store.bindFamily('default');
+
+  // ---- Attach real listeners for family "default" ----
+  Sync._attachListeners();
+  const growthPathA = 'families/default/growth';
+  check('family A 的 growth 監聽器已註冊', (registries[growthPathA] || []).length === 1, 'count=' + ((registries[growthPathA] || []).length));
+  const staleCallback = registries[growthPathA][0].cb; // hang on to this -- the "straggler"
+
+  // ---- Switch to family "friendA" (the real switchFamily, unmodified) ----
+  Sync.switchFamily('friendA');
+  check('switchFamily 後 currentFamilyId 已變更', win.eval('currentFamilyId') === 'friendA', win.eval('currentFamilyId'));
+  check('Store.data 已切換到 friendA 的本機快取', Store._familyId === 'friendA', Store._familyId);
+
+  const growthPathB = 'families/friendA/growth';
+  check('family B 的 growth 監聽器已註冊', (registries[growthPathB] || []).length === 1);
+
+  // ---- Simulate the straggler: family A's OLD callback fires AFTER the switch ----
+  const fakeDoc = { id: 'stale-growth-from-A', weight: 999, updatedAt: new Date().toISOString() };
+  staleCallback({
+    metadata: { fromCache: false },
+    docChanges: () => [{ doc: { id: fakeDoc.id, data: () => fakeDoc } }],
+  });
+
+  const leaked = Store.data.growth.some((g) => g.id === 'stale-growth-from-A');
+  check('★ 修復驗證：family A 的殘留 snapshot 沒有污染 family B 的資料', !leaked,
+    leaked ? 'BUG: ' + JSON.stringify(Store.data.growth) : 'growth 陣列乾淨');
+
+  // ---- Control: a LEGITIMATE current-generation (family B) delivery still merges normally ----
+  const legitDoc = { id: 'real-growth-from-B', weight: 7.2, updatedAt: new Date().toISOString() };
+  const currentCallback = registries[growthPathB][0].cb;
+  currentCallback({
+    metadata: { fromCache: false },
+    docChanges: () => [{ doc: { id: legitDoc.id, data: () => legitDoc } }],
+  });
+  const merged = Store.data.growth.some((g) => g.id === 'real-growth-from-B');
+  check('對照組：目前世代的正常 snapshot 仍然正確合併', merged);
+
+  say('');
+  const allPass = !document.querySelectorAll('.fail').length;
+  say(allPass ? '=== 結果：全部通過 ===' : '=== 結果：有測試失敗 ===', allPass ? 'pass' : 'fail');
+}
+run().catch((e) => { say('EXCEPTION: ' + (e && e.stack || e), 'fail'); });
+</script>
+</body>
+</html>

@@ -3,6 +3,39 @@
 版號規則跟 JPL（日語學習 App）主 dev 對話一致：`MAJOR.MINOR.PATCH`——新功能升 MINOR、
 架構級的重大改動升 MAJOR、bug 修正/小改善升 PATCH。版本號顯示在設定頁最下方。
 
+## v2.37.4 — 2026-08-29
+
+**修復：切換家庭（寶寶）時，舊家庭的成長紀錄會滲透到新家庭裡**
+
+- 根因：`switchFamily`／`chooseFamily`（`js/firebase-sync.js`）在把 `Store.data`
+  切換到新家庭之後才呼叫 `_attachListeners()` 去取消訂閱舊家庭的 Firestore
+  監聽器（`_detachListeners()`）。但 Firestore SDK 的「取消訂閱」是透過它自己
+  內部的非同步佇列處理的——如果舊家庭的監聽器在切換當下**已經有一筆 snapshot
+  在傳送路上**，取消訂閱**不會**追溯攔截它，那筆遲到的 snapshot 還是會執行
+  callback。這個 callback 完全不知道自己屬於已經作廢的監聽器世代，直接把舊
+  家庭的成長紀錄合併進當下的 `Store.data`（`Store._mergeOne` 純粹用 `id` 比對，
+  成長紀錄本身沒有家庭欄位可以攔下這種錯配），`persist()` 再把污染寫進新家庭
+  自己的本機快取——不是暫時性的畫面錯誤，是真的存到 localStorage 裡。
+  cs90s203@gmail.com 同時屬於 `default` 和 `friendA` 兩個家庭，且用過「切換
+  寶寶」，正好踩進這個窗口。
+- 修法：`_attachListeners()` 本來就會呼叫 `_detachListeners()`（順便把
+  `_resyncToken` 計數器 +1，這個計數器原本只有 `forceResync` 的非同步收尾在
+  用），現在讓 events／growth／settings 三個 onSnapshot callback 一開頭都先記
+  住自己這個世代的 token，執行時若目前的 token 已經被後面的切換動掉，直接
+  丟棄——不管是切換家庭、登出重登、還是監聽器錯誤重試觸發的重新訂閱，遲到
+  的舊世代 snapshot 一律擋掉。
+- 驗證：新增 `tools/family-switch-race-test.html`，用真正的
+  `_attachListeners`/`_detachListeners`/`switchFamily`（不像既有的
+  `twodevice-sync-test.html` 整組換成簡化版假實作，完全沒測到這條路徑）搭配
+  假 `fbDb`，直接模擬「舊監聽器切換後才送達」這個情境。先移除修復（保留
+  guard 但讓它失效）確認測試真的會抓到污染（`weight:999` 的假資料確實跑進
+  了新家庭的陣列），再還原修復重跑，確認乾淨；原本的 7 個情境
+  `twodevice-sync-test.html` 也全部重新跑過，沒有回歸。
+- **這版只堵住未來的污染，不會清掉已經滲透進去的舊資料**——iOS 沒有辦法讓我
+  從這裡直接讀到你 Firestore 裡實際的內容，如果你在成長統計頁上還看得到不
+  屬於這個寶寶的紀錄（例如另一個寶寶的體重／身高數字混進來），麻煩截圖告訴
+  我具體是哪幾筆、大概是什麼時候新增的，我再幫忙從資料裡把它們挑出來刪除。
+
 ## v2.37.3 — 2026-08-25
 
 **「手機主畫面圖示」卡片下面加上换圖示的步驟提示**
