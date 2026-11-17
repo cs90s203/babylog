@@ -302,17 +302,42 @@ const Sync = {
     // correctness risk, and a full cross-tab mutex is disproportionate effort for that.
     if (this._pushAllLocalInFlight) return;
     if (this._inQuotaCooldown()) return; // already known-doomed until the cooldown clears — see _noteQuotaExhausted
-    const watermarkKey = "catchup_push_wm_" + currentFamilyId;
-    const watermark = Store.local(watermarkKey) || "";
-    const isNew = (doc) => (doc.updatedAt || "") > watermark;
+    const fid = currentFamilyId;
+    // INCIDENT (2026-11): the "updatedAt > one global watermark" rule described above cannot
+    // express "record A failed to push but the newer record B succeeded" — B's success moved
+    // the watermark past A, so A looked already-synced forever and never reached the cloud (no
+    // other family member ever saw it; if this phone's storage was later cleared it was gone
+    // for good). Reproduced for real by tools/watermark-gap-test.html: a rejected push, and a
+    // push silently skipped during the quota cooldown, are both followed by a successful push
+    // of a newer record. Replaced with a per-record ledger (see _markPending): an entry is
+    // added the moment a record is written and removed only when THAT version is confirmed
+    // pushed, so a later success can never cover for an earlier failure.
+    if (Store.local(this._pendingKey(fid)) === null) {
+      // First run of the ledger on this device+family: adopt exactly what the old watermark
+      // rule would have pushed, so an in-progress backlog isn't dropped by the upgrade.
+      const wm = Store.local("catchup_push_wm_" + fid) || "";
+      const seed = {};
+      Store.data.events.forEach((e) => { if ((e.updatedAt || "") > wm) seed["events/" + e.id] = e.updatedAt || ""; });
+      Store.data.growth.forEach((g) => { if ((g.updatedAt || "") > wm) seed["growth/" + g.id] = g.updatedAt || ""; });
+      if (Store.data.settings && Store.data.settings.updatedAt && Store.data.settings.updatedAt > wm) seed["settings/main"] = Store.data.settings.updatedAt;
+      this._writePending(fid, seed);
+    }
+    const pending = this._readPending(fid);
     const docs = [];
-    Store.data.events.forEach((ev) => { if (isNew(ev)) docs.push({ kind: "events", id: ev.id, doc: ev }); });
-    Store.data.growth.forEach((g) => { if (isNew(g)) docs.push({ kind: "growth", id: g.id, doc: g }); });
-    // Only push settings that have actually been touched (updatedAt set) — otherwise
-    // switching to a family this device hasn't synced down yet would push the untouched
-    // defaultData() scaffolding (blank babyName etc.) and clobber that family's real
-    // settings before the listener below even gets a chance to pull them down.
-    if (Store.data.settings && Store.data.settings.updatedAt && isNew(Store.data.settings)) docs.push({ kind: "settings", id: "main", doc: Store.data.settings });
+    const orphaned = [];
+    Object.keys(pending).forEach((key) => {
+      const slash = key.indexOf("/");
+      const kind = key.slice(0, slash), id = key.slice(slash + 1);
+      // Only push settings that have actually been touched (updatedAt set) — otherwise
+      // switching to a family this device hasn't synced down yet would push the untouched
+      // defaultData() scaffolding (blank babyName etc.) and clobber that family's real
+      // settings before the listener below even gets a chance to pull them down.
+      const doc = kind === "settings"
+        ? (Store.data.settings && Store.data.settings.updatedAt ? Store.data.settings : null)
+        : (Store.data[kind] || []).find((x) => x.id === id) || null;
+      if (doc) docs.push({ kind, id, doc }); else orphaned.push([key, pending[key]]);
+    });
+    if (orphaned.length) this._clearPendingMany(fid, orphaned); // ledger entry whose record no longer exists locally -- nothing to push
     if (docs.length === 0) return;
 
     // Cloud Firestore hard-caps one WriteBatch at 500 operations. This app already has ~1000
@@ -330,15 +355,20 @@ const Sync = {
     chunks.forEach((chunk) => {
       chain = chain.then(() => {
         const batch = fbDb.batch();
-        let maxSeenInChunk = "";
+        const included = [];
         chunk.forEach(({ kind, id, doc }) => {
-          batch.set(fbDb.doc(`${familyPath()}/${kind}/${id}`), doc, { merge: true });
-          if ((doc.updatedAt || "") > maxSeenInChunk) maxSeenInChunk = doc.updatedAt;
+          // One record Firestore refuses outright (e.g. an `undefined` field makes set() throw
+          // synchronously) must not take the other 399 in its chunk down with it on every
+          // retry -- skip it (it stays in the ledger and is reported) and push the rest.
+          try {
+            batch.set(fbDb.doc(`${familyPath()}/${kind}/${id}`), doc, { merge: true });
+            included.push([kind + "/" + id, doc.updatedAt || ""]);
+          } catch (e) { this._notePushFailure(e); }
         });
+        if (included.length === 0) return;
         return batch.commit().then(() => {
           this._notePushSuccess();
-          const soFar = Store.local(watermarkKey) || "";
-          if (maxSeenInChunk > soFar) Store.local(watermarkKey, maxSeenInChunk);
+          this._clearPendingMany(fid, included);
         });
       });
     });
@@ -384,6 +414,7 @@ const Sync = {
     // all (that's the bug), which would make that gate permanently false and this whole fix a
     // no-op for the one case it exists for. Each listener only needs to know about itself.
     let eventsSeenFirst = false, growthSeenFirst = false, settingsSeenFirst = false;
+    let eventsReconciled = false, growthReconciled = false; // once per attach, on the first SERVER-confirmed snapshot -- see _reconcileWithCloud
 
     // includeMetadataChanges matters here: WITHOUT it, Firestore suppresses the snapshot
     // that fires when the server confirms the initial cache-served result with IDENTICAL
@@ -406,6 +437,7 @@ const Sync = {
         const changed = Store.mergeRemoteBatch("events", snap.docChanges().map((c) => ({ id: c.doc.id, ...c.doc.data() })));
         if (changed && eventsSeenFirst) this._noteLiveConnectionConfirmed();
         eventsSeenFirst = true;
+        if (!eventsReconciled && !snap.metadata.fromCache) { eventsReconciled = true; this._reconcileWithCloud("events", snap); }
         settled();
       },
       (err) => this._onListenerError(err)
@@ -418,6 +450,7 @@ const Sync = {
         const changed = Store.mergeRemoteBatch("growth", snap.docChanges().map((c) => ({ id: c.doc.id, ...c.doc.data() })));
         if (changed && growthSeenFirst) this._noteLiveConnectionConfirmed();
         growthSeenFirst = true;
+        if (!growthReconciled && !snap.metadata.fromCache) { growthReconciled = true; this._reconcileWithCloud("growth", snap); }
         settled();
       },
       (err) => this._onListenerError(err)
@@ -552,30 +585,86 @@ const Sync = {
     this.lastPushError = "";
     this.listeners.forEach((fn) => fn());
   },
-  // _pushAllLocal's watermark otherwise only advances from its OWN batch commits, never from
-  // these everyday individual pushes — so every record that's already been successfully
-  // synced this way would still look "new" (updatedAt > watermark) to the next catch-up push
-  // and get needlessly resent. Nudging the watermark forward here too means the catch-up
-  // backlog stays bounded to "since the last individual push", not "since the last catch-up".
-  _advanceWatermark(updatedAt) {
-    if (!updatedAt || !currentFamilyId) return;
-    const key = "catchup_push_wm_" + currentFamilyId;
-    const cur = Store.local(key) || "";
-    if (updatedAt > cur) Store.local(key, updatedAt);
+  // ---- pending-push ledger: "key -> updatedAt of the version still owed to the cloud" ----
+  // Stored per family under bt_local_pending_push_{familyId} as {"events/<id>": updatedAt, ...}.
+  // Normally empty, so the catch-up push stays a 0-write no-op on ordinary established use.
+  _pendingKey(fid) { return "pending_push_" + fid; },
+  _pendingFid() { return currentFamilyId || Store._familyId || null; }, // sign-out clears currentFamilyId but Store stays bound -- records made while signed out still belong to that family
+  _readPending(fid) {
+    try { return JSON.parse(Store.local(this._pendingKey(fid)) || "{}") || {}; } catch (e) { return {}; }
+  },
+  _writePending(fid, obj) { Store.local(this._pendingKey(fid), JSON.stringify(obj)); },
+  _markPending(fid, kind, doc) {
+    if (!fid || !doc) return;
+    const p = this._readPending(fid);
+    p[kind + "/" + (kind === "settings" ? "main" : doc.id)] = doc.updatedAt || "";
+    this._writePending(fid, p);
+  },
+  // entries: [[key, updatedAt], ...]. An entry is only removed if it still holds the version
+  // that was just confirmed -- if the record was edited again meanwhile (newer updatedAt
+  // re-marked it), that newer version is still owed and must stay.
+  _clearPendingMany(fid, entries) {
+    const p = this._readPending(fid);
+    let changed = false;
+    entries.forEach(([key, updatedAt]) => {
+      if (key in p && p[key] === updatedAt) { delete p[key]; changed = true; }
+    });
+    if (changed) this._writePending(fid, p);
+  },
+  // After an individual push succeeds the connection is demonstrably healthy -- the right
+  // moment to flush anything else still owed (e.g. a record that failed or was skipped during
+  // the quota cooldown). At most once per 30s so a persistently-failing record can't turn
+  // every later success into another failing write attempt.
+  _flushTimer: null,
+  _lastFlushAt: 0,
+  _flushPendingSoon(fid) {
+    if (this._flushTimer || !fid) return;
+    if (Object.keys(this._readPending(fid)).length === 0) return; // the common case: nothing else owed
+    const wait = Math.max(1500, 30000 - (Date.now() - this._lastFlushAt));
+    this._flushTimer = setTimeout(() => {
+      this._flushTimer = null;
+      this._lastFlushAt = Date.now();
+      this._pushAllLocal();
+    }, wait);
+  },
+  // Single-family accounts only (a multi-family device's local cache could hold another
+  // family's records from the pre-2.37.4 listener leak, and pushing those would spread them):
+  // once the SERVER-confirmed snapshot of a collection arrives, any local record the cloud
+  // doesn't have was never delivered -- stranded by the old watermark gap above -- so owe it.
+  _reconcileWithCloud(kind, snap) {
+    if (this.availableFamilyIds.length !== 1 || !currentFamilyId || !snap.docs) return;
+    const fid = currentFamilyId;
+    const inCloud = new Set(snap.docs.map((d) => d.id));
+    const p = this._readPending(fid);
+    let added = 0;
+    (Store.data[kind] || []).forEach((doc) => {
+      if (!inCloud.has(doc.id)) { p[kind + "/" + doc.id] = doc.updatedAt || ""; added++; }
+    });
+    if (!added) return;
+    this._writePending(fid, p);
+    this._pushAllLocal();
   },
   pushDoc(kind, doc) {
+    const fid = this._pendingFid();
+    this._markPending(fid, kind, doc); // BEFORE every early return below: skipped/failed/offline pushes must stay owed
     if (!this.isSignedIn() || !fbDb) return;
-    if (this._inQuotaCooldown()) return; // a doomed attempt right now would just count as another failure; the record stays local and goes out once the cooldown clears (via the watermark catch-up)
-    fbDb.doc(`${familyPath()}/${kind}/${doc.id}`).set(doc, { merge: true })
-      .then(() => { this._notePushSuccess(); this._advanceWatermark(doc.updatedAt); })
-      .catch((err) => this._notePushFailure(err));
+    if (this._inQuotaCooldown()) return; // a doomed attempt right now would just count as another failure; the record stays in the ledger and goes out once the cooldown clears
+    try {
+      fbDb.doc(`${familyPath()}/${kind}/${doc.id}`).set(doc, { merge: true })
+        .then(() => { this._notePushSuccess(); this._clearPendingMany(fid, [[kind + "/" + doc.id, doc.updatedAt || ""]]); this._flushPendingSoon(fid); })
+        .catch((err) => this._notePushFailure(err));
+    } catch (err) { this._notePushFailure(err); } // set() throws synchronously on data Firestore rejects (e.g. an undefined field) -- used to escape into the caller
   },
   pushSettings(settings) {
+    const fid = this._pendingFid();
+    this._markPending(fid, "settings", settings);
     if (!this.isSignedIn() || !fbDb) return;
     if (this._inQuotaCooldown()) return;
-    fbDb.doc(`${familyPath()}/settings/main`).set(settings, { merge: true })
-      .then(() => { this._notePushSuccess(); this._advanceWatermark(settings.updatedAt); })
-      .catch((err) => this._notePushFailure(err));
+    try {
+      fbDb.doc(`${familyPath()}/settings/main`).set(settings, { merge: true })
+        .then(() => { this._notePushSuccess(); this._clearPendingMany(fid, [["settings/main", settings.updatedAt || ""]]); this._flushPendingSoon(fid); })
+        .catch((err) => this._notePushFailure(err));
+    } catch (err) { this._notePushFailure(err); }
   },
 };
 

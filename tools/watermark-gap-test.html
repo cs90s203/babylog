@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8">
+<title>補送 watermark 漏洞測試</title>
+<style>body{font-family:monospace;white-space:pre-wrap;padding:20px;font-size:14px;}.pass{color:#2a7;}.fail{color:#e33;font-weight:bold;}</style>
+</head>
+<body>
+<!--
+  Regression test: a record whose individual push was skipped/failed must still be picked up by
+  the catch-up push (_pushAllLocal) even after a LATER record pushes successfully. The catch-up
+  watermark is a single "newest updatedAt confirmed pushed" value, so a later success used to
+  advance it past an earlier un-pushed record, which then looked "already synced" forever and
+  never reached the cloud (invisible to every other family member).
+  Drives the REAL Sync/Store from js/ with a fake fbDb.
+-->
+<div id="out"></div>
+<iframe id="dev" style="display:none;"></iframe>
+<script>
+const out = document.getElementById('out');
+const log = [];
+function say(s, cls) { log.push(cls ? `<span class="${cls}">${s}</span>` : s); out.innerHTML = log.join('\n'); }
+function check(name, cond, detail) { say((cond ? '✓ PASS  ' : '✗ FAIL  ') + name + (detail ? '   → ' + detail : ''), cond ? 'pass' : 'fail'); return cond; }
+const wait = (ms) => new Promise(r => setTimeout(r, ms));
+
+const base = location.origin;
+const bust = '?t=' + Date.now();
+const frameHtml = `<!DOCTYPE html><html><head></head><body><div id="root"></div>
+<script src="${base}/js/who-data.js${bust}"><\/script>
+<script src="${base}/js/predict.js${bust}"><\/script>
+<script src="${base}/js/store.js${bust}"><\/script>
+<script src="${base}/js/csv.js${bust}"><\/script>
+<script src="${base}/js/firebase-sync.js${bust}"><\/script>
+</body></html>`;
+
+async function scenario(name, setup) {
+  say('--- ' + name + ' ---');
+  for (let i = localStorage.length - 1; i >= 0; i--) {
+    const k = localStorage.key(i);
+    if (k && (k.indexOf('bt_data') === 0 || k.indexOf('bt_local_') === 0)) localStorage.removeItem(k);
+  }
+  const frame = document.createElement('iframe');
+  frame.style.display = 'none';
+  document.body.appendChild(frame);
+  await new Promise((resolve) => { frame.onload = resolve; frame.srcdoc = frameHtml; });
+  const win = frame.contentWindow;
+  const { Store, Sync } = win.eval('({ Store: Store, Sync: Sync })');
+
+  const cloud = {};          // path -> doc
+  // make the next N individual .set() calls reject with 'internal' -- deliberately NOT
+  // resource-exhausted, which arms the 4h cooldown and would skip R2 as well, blurring scenario 1
+  let failNextSets = 0;
+  const listeners = {};      // 'events' | 'growth' | 'settings' -> onSnapshot callback
+  let writes = 0;            // every individual set() + every doc in a committed batch
+  win.__fakeDb = {
+    doc: (path) => ({
+      set: (doc) => { if (failNextSets > 0) { failNextSets--; return Promise.reject({ code: 'internal' }); } writes++; cloud[path] = doc; return Promise.resolve(); },
+      onSnapshot: (opts, cb) => { listeners.settings = cb; return () => {}; },
+    }),
+    collection: (path) => ({ onSnapshot: (opts, cb) => { listeners[path.split('/').pop()] = cb; return () => {}; } }),
+    batch: () => { const ops = []; return { set: (ref, doc) => ops.push(doc), commit: () => { ops.forEach((d) => { writes++; cloud['batch/' + d.id] = d; }); return Promise.resolve(); } }; },
+  };
+  win.eval('fbDb = __fakeDb; currentFamilyId = "friendA";');
+  Sync.user = { email: 'jumptoohigh@test', displayName: 'j', photoURL: '' };
+  Sync.familyId = 'friendA';
+  Sync.availableFamilyIds = ['friendA'];
+  Store.bindFamily('friendA');
+  Store._cloudPush = (kind, doc) => Sync.pushDoc(kind, doc);
+
+  const ctl = { Store, Sync, win, cloud, listeners, getWrites: () => writes, failNext: (n) => { failNextSets = n; } };
+  await setup(ctl);
+  frame.remove();
+}
+
+function inCloud(cloud, id) { return Object.keys(cloud).some((k) => k.endsWith('/' + id)); }
+
+async function run() {
+  // Scenario 1: R1's push is rejected (any transient server error), R2 pushes fine afterwards, then the app
+  // reloads / reconnects and runs the catch-up push. R1 must still reach the cloud.
+  await scenario('情境 1：舊紀錄推送失敗、新紀錄成功後，補送仍要帶上舊紀錄', async ({ Store, Sync, cloud, failNext }) => {
+    failNext(1);
+    const r1 = Store.addEvent('milk', new Date(), { amountMl: 100 });
+    await wait(20);
+    await wait(5);
+    const r2 = Store.addEvent('milk', new Date(Date.now() + 1000), { amountMl: 120 });
+    await wait(20);
+    check('R2 已推上雲端（對照）', inCloud(cloud, r2.id));
+    check('R1 一開始失敗、不在雲端（前提）', !inCloud(cloud, r1.id));
+    Sync._pushAllLocalInFlight = false;
+    Sync._pushAllLocal();
+    await wait(50);
+    check('★ 補送後 R1 最終到達雲端', inCloud(cloud, r1.id));
+  });
+
+  // Scenario 2: records created during the quota cooldown are skipped silently by pushDoc; once
+  // the cooldown ends and a new record pushes fine, the skipped ones must still be caught up.
+  await scenario('情境 2：冷卻期間被略過的紀錄，冷卻結束後仍要補送', async ({ Store, Sync, cloud, win }) => {
+    Sync._noteQuotaExhausted(); // arms the 4h cooldown for friendA
+    const r1 = Store.addEvent('poop', new Date(), {});
+    await wait(20);
+    check('冷卻期間 R1 沒有推上去（預期行為）', !inCloud(cloud, r1.id));
+    Store.local('quota_cooldown_friendA', '0'); // cooldown over
+    await wait(5);
+    const r2 = Store.addEvent('pee', new Date(Date.now() + 1000), {});
+    await wait(20);
+    check('冷卻結束後 R2 推上雲端（對照）', inCloud(cloud, r2.id));
+    Sync._pushAllLocalInFlight = false;
+    Sync._pushAllLocal();
+    await wait(50);
+    check('★ 補送後冷卻期間的 R1 最終到達雲端', inCloud(cloud, r1.id));
+  });
+
+  // Scenario 3: records ALREADY stranded by the old watermark gap (older than the stored
+  // watermark, absent from the cloud, ledger empty) must be recovered on a single-family
+  // device once the server-confirmed snapshot shows the cloud doesn't have them.
+  await scenario('情境 3：已經被舊 watermark 漏掉的紀錄，單一家庭帳號連線後要補回', async ({ Store, Sync, cloud, listeners, win }) => {
+    const stranded = { id: 'stranded-1', type: 'milk', time: new Date().toISOString(), by: 'x', amountMl: 90, updatedAt: '2026-01-01T00:00:00.000Z', deleted: false };
+    Store.data.events.push(stranded); Store.persist();
+    Store.local('catchup_push_wm_friendA', '2026-06-01T00:00:00.000Z'); // watermark already past it -- the exact stuck state
+    Store.local('pending_push_friendA', '{}');
+    Sync._attachListeners();
+    listeners.events({ metadata: { fromCache: true }, docChanges: () => [], docs: [] }); // cache hydration: must NOT trigger reconcile
+    await wait(30);
+    check('快取快照不會觸發補回（前提）', !inCloud(cloud, 'stranded-1'));
+    listeners.events({ metadata: { fromCache: false }, docChanges: () => [], docs: [] }); // server says: cloud has nothing
+    await wait(60);
+    check('★ 伺服器確認後，被漏掉的舊紀錄補回雲端', inCloud(cloud, 'stranded-1'));
+  });
+
+  // Scenario 4: a multi-family account must NOT auto-reconcile (its local cache can hold
+  // another family's records from the pre-2.37.4 listener leak; pushing them would spread them).
+  await scenario('情境 4：多家庭帳號不做自動補回（避免把別的寶寶資料推進這個家庭）', async ({ Store, Sync, cloud, listeners }) => {
+    Sync.availableFamilyIds = ['default', 'friendA'];
+    Store.data.events.push({ id: 'foreign-1', type: 'milk', time: new Date().toISOString(), by: 'x', amountMl: 90, updatedAt: '2026-01-01T00:00:00.000Z', deleted: false });
+    Store.persist();
+    Store.local('catchup_push_wm_friendA', '2026-06-01T00:00:00.000Z');
+    Store.local('pending_push_friendA', '{}');
+    Sync._attachListeners();
+    listeners.events({ metadata: { fromCache: false }, docChanges: () => [], docs: [] });
+    await wait(60);
+    check('多家庭帳號：不會推出雲端沒有的本機紀錄', !inCloud(cloud, 'foreign-1'));
+  });
+
+  // Scenario 5: ordinary established use must stay a zero-write no-op for the catch-up path.
+  await scenario('情境 5：一切正常時，補送不產生任何多餘寫入', async ({ Store, Sync, cloud, listeners, getWrites }) => {
+    const r = Store.addEvent('milk', new Date(), { amountMl: 100 });
+    await wait(30);
+    const before = getWrites();
+    check('正常新增時只有那 1 次寫入（前提）', before === 1, 'writes=' + before);
+    Sync._attachListeners();
+    listeners.events({ metadata: { fromCache: false }, docChanges: () => [], docs: [{ id: r.id }] });
+    Sync._pushAllLocalInFlight = false;
+    Sync._pushAllLocal();
+    await wait(60);
+    check('★ 重連 + 補送 + 對帳之後，寫入次數沒有增加', getWrites() === before, 'writes=' + getWrites());
+  });
+
+  say('');
+  const allPass = !document.querySelectorAll('.fail').length;
+  say(allPass ? '=== 結果：全部通過 ===' : '=== 結果：有測試失敗 ===', allPass ? 'pass' : 'fail');
+  for (let i = localStorage.length - 1; i >= 0; i--) {
+    const k = localStorage.key(i);
+    if (k && (k.indexOf('bt_data') === 0 || k.indexOf('bt_local_') === 0)) localStorage.removeItem(k);
+  }
+}
+run().catch((e) => { say('EXCEPTION: ' + (e && e.stack || e), 'fail'); });
+</script>
+</body>
+</html>

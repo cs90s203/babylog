@@ -53,6 +53,21 @@ Firebase 提供現成的 Google 登入 + 即時資料庫，使用者只要「登
 IndexedDB。沒有網路時本機新增的紀錄照常可以記（`Store` 本來就是 localStorage-first），
 Firestore SDK 會把還沒送出的寫入排隊，恢復網路後自動補送。
 
+## 「還欠雲端的紀錄」帳本（pending-push ledger）
+
+SDK 的排隊只管「送出去了但還沒收到回應」的寫入；被拒絕（錯誤、額度用完）或在額度冷卻期間
+被刻意略過的寫入，SDK 不會幫忙重送。`firebase-sync.js` 自己維護一份帳本：
+`bt_local_pending_push_{familyId}`，內容是 `{"events/<id>": updatedAt, ...}`。
+
+- 每次寫入紀錄（`pushDoc`／`pushSettings`）**先**登記進帳本，確認推上雲端後才移除（只在帳本裡
+  還是「那個版本」時才移除，期間又被改過的新版本會留著）。
+- `_pushAllLocal()`（登入、切換家庭、任何一次推送成功後的 flush）只推帳本裡的項目；正常情況帳本是空的，
+  所以是 0 次寫入。
+- 單一家庭帳號連線後，第一個「伺服器確認」的快照會跟本機對帳：本機有、雲端沒有的紀錄補進帳本
+  （`_reconcileWithCloud`）。多家庭帳號不做這個對帳，避免把別的寶寶的資料推進錯的家庭。
+- 舊版用「單一 watermark（最新已推 updatedAt）」判斷，後面的紀錄推成功就會把前面失敗的紀錄蓋過去，
+  那些紀錄永遠不會再被補送——見 CHANGELOG 2.37.5。
+
 ## 狀態回饋
 
 首頁頂部同步小提示列：
